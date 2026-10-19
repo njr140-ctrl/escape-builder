@@ -1947,8 +1947,8 @@ function generate(project, show) {
   for (const p of digIns) {
     const pin = findPin(project.board, p.pin);
     const v = N[p.id].v, C = PC(p);
-    // "Flip on/off" in Parts: for hardware that reads the opposite way (a sensor that's on when it should be off)
-    const flip = !!optsOf(p).flip, lowOn = low => String(flip ? !low : low), note = flip ? '   // flipped: reads the other way round' : '';
+    // "Reversed" in Parts: for hardware that reads the opposite way (a sensor that's on when it should be off)
+    const flip = !!optsOf(p).flip, lowOn = low => String(flip ? !low : low), note = flip ? '   // reversed: reads the other way round' : '';
     if (p.type === 'motion') add('  ' + v + '.begin(' + C + ', INPUT, ' + lowOn(false) + ');' + note);
     else if (p.type === 'linkin') add('  ' + v + '.begin(' + C + ', INPUT, ' + lowOn(false) + ');' + (note || '        // the other board drives this pin HIGH for "on"'));
     else if (pin.inputOnly) add('  ' + v + '.begin(' + C + ', INPUT, ' + lowOn(true) + ');' + (note || '         // needs a 10k pull-up resistor to 3.3V'));
@@ -1961,7 +1961,7 @@ function generate(project, show) {
     const o = optsOf(p);
     const relayLow = (p.type === 'relay' || p.type === 'maglock') && o.activeLow, flipped = (p.type === 'light' || p.type === 'buzzer') && o.flip;
     const low = relayLow || flipped;
-    add('  ' + N[p.id].v + '.begin(' + PC(p) + ', ' + (low ? 'true' : 'false') + ');' + (relayLow ? '   // relay module switches on when its pin is LOW' : flipped ? '   // flipped: on when its pin is LOW' : ''));
+    add('  ' + N[p.id].v + '.begin(' + PC(p) + ', ' + (low ? 'true' : 'false') + ');' + (relayLow ? '   // relay module switches on when its pin is LOW' : flipped ? '   // reversed: on when its pin is LOW' : ''));
     const w = OUTPUT_WORDS[p.type] || ['on', 'off'];
     add('  ' + N[p.id].v + '.name = F(' + cstr(oneLine(p.name)) + '); ' + N[p.id].v + '.onWord = F(' + cstr(w[0]) + '); ' + N[p.id].v + '.offWord = F(' + cstr(w[1]) + ');');
   }
@@ -3002,12 +3002,13 @@ function screenType(p) {
 }
 function partOpts(project, p) {
   const o = optsOf(p);
-  const cb = (k, label) => '<label><input type="checkbox" id="o-' + p.id + '-' + k + '" data-k="opt" data-id="' + p.id + '" data-opt="' + k + '"' + (o[k] ? ' checked' : '') + '>' + label + '</label>';
+  const cb = (k, label, tip) => '<label' + (tip ? ' title="' + esc(tip) + '"' : '') + '><input type="checkbox" id="o-' + p.id + '-' + k + '" data-k="opt" data-id="' + p.id + '" data-opt="' + k + '"' + (o[k] ? ' checked' : '') + '>' + label + '</label>';
+  const reversed = isIn => cb('flip', 'Reversed', isIn ? 'Tick this if it shows on when it\u2019s off' : 'Tick this if it turns on when it should be off');
   const fs = fieldsOf(p);
   const multi = fs.length > 1 ? '<div class="pin-fields">' + fs.map(([f, role, need]) => pinSelect(project, p, f, need, roleText(p, role))).join('') + '</div>' : '';
   switch (p.type) {
-    case 'light': case 'buzzer': return cb('startOn', 'On at start') + cb('flip', 'Flip on/off');
-    case 'button': case 'switch': case 'magnet': case 'motion': case 'linkin': return cb('flip', 'Flip on/off');
+    case 'light': case 'buzzer': return cb('startOn', 'On at start') + reversed(false);
+    case 'button': case 'switch': case 'magnet': case 'motion': case 'linkin': return reversed(true);
     case 'relay': return cb('startOn', 'On at start') + cb('activeLow', 'Relay switches on LOW');
     case 'maglock': return cb('startLocked', 'Locked at start') + cb('activeLow', 'Relay switches on LOW');
     case 'dfplayer': return multi + optNum(p, 'volume', 'Volume', 'of 30', 0, 30);
