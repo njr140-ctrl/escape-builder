@@ -685,7 +685,7 @@ const PARAM = {
   blink:   { unit: 'times', def: 3,   min: 1,   step: 1, extras: [{ key: 'value2', pre: 'on for', unit: 's', def: 0.3, min: 0.05, step: 0.05 }, { key: 'value3', pre: 'off for', unit: 's', def: 0.3, min: 0.05, step: 0.05 }] },
   fwd:     { unit: '%',     def: 75,  min: 0,   max: 100, step: 5, extras: [{ key: 'value2', pre: 'for', unit: 's (empty keeps going)', def: '', min: 0, step: 0.5 }] },
   back:    { unit: '%',     def: 75,  min: 0,   max: 100, step: 5, extras: [{ key: 'value2', pre: 'for', unit: 's (empty keeps going)', def: '', min: 0, step: 0.5 }] },
-  angle:   { unit: '°',     def: 90,  min: 0,   max: 180, step: 1 },
+  angle:   { unit: '°',     def: 90,  min: 0,   max: 180, step: 1, extras: [{ key: 'value2', pre: 'over', unit: 's (0 = instant)', def: 0, min: 0, step: 0.5 }] },
   play:    { unit: '(mp3/0001.mp3 = 1)', def: 1, min: 1, step: 1 },
   loop:    { unit: '(mp3/0001.mp3 = 1)', def: 1, min: 1, step: 1 },
   volume:  { unit: 'of 30', def: 20,  min: 0,   max: 30,  step: 1 },
@@ -1037,9 +1037,14 @@ function flashMembers(add, extra, onCode, offCode, what) {
 // MP3 players this board ever loops, so a plain "play" on them first stops the repeating
 let LOOPED_PLAYERS = new Set();
 const loopsUsed = part => LOOPED_PLAYERS.has(part.id);
+// Servos that ever "move to … over N s", so they get a glide helper
+let GLIDE_SERVOS = new Set();
+const glideMs = a => Math.max(0, Math.round(num(a.value2, 0) * 1000));
+const glides = part => GLIDE_SERVOS.has(part.id);
 function generate(project, show) {
   const SH = show ? showCtxOf(show, project) : null;
   LOOPED_PLAYERS = new Set(project.rules.flatMap(r => r.then).concat(SH ? SH.cmds.map(cm => cm.a) : []).filter(a => a.action === 'loop').map(a => a.part));
+  GLIDE_SERVOS = new Set(project.rules.flatMap(r => r.then).concat(SH ? SH.cmds.map(cm => cm.a) : []).filter(a => a.action === 'angle' && glideMs(a) > 0).map(a => a.part));
   // Actions this board's code carries out (its own rules, plus scene steps), so helpers only include what's used
   const actsUsed = new Set(project.rules.flatMap(r => r.then.map(a => a.action)).concat(SH ? SH.cmds.map(cm => cm.a.action) : []));
   const flickers = actsUsed.has('flick');
@@ -1757,7 +1762,32 @@ function generate(project, show) {
       add('char ' + v + 'Key = 0;         // the key just pressed');
     }
     for (const p of digOuts) add('Output ' + N[p.id].v + ';');
-    for (const p of servos) add('Servo ' + N[p.id].v + ';');
+    if (servos.some(glides)) {
+      add('// Servo helper: glides to an angle over a set time instead of jumping there');
+      add('struct ServoGlide {');
+      add('  Servo &s;');
+      add('  int from = 0, to = 0;');
+      add('  unsigned long start = 0, ms = 0;');
+      add('  bool moving = false;');
+      add('  ServoGlide(Servo &servo) : s(servo) {}');
+      add('  void go(int target, unsigned long over) {   // over 0: jump straight there');
+      add('    to = constrain(target, 0, 180);');
+      add('    from = s.read();');
+      add('    start = millis();');
+      add('    ms = over;');
+      add('    moving = over > 0 && from != to;');
+      add('    if (!moving) s.write(to);');
+      add('  }');
+      add('  void stop() { moving = false; }');
+      add('  void update() {');
+      add('    if (!moving) return;');
+      add('    unsigned long t = millis() - start;');
+      add('    if (t >= ms) { s.write(to); moving = false; return; }');
+      add('    s.write(from + (int)((long)(to - from) * (long)t / (long)ms));');
+      add('  }');
+      add('};');
+    }
+    for (const p of servos) add('Servo ' + N[p.id].v + ';' + (glides(p) ? '\nServoGlide ' + N[p.id].v + 'Glide(' + N[p.id].v + ');   // moves it smoothly' : ''));
     players.forEach((p, i) => {
       if (esp) add('HardwareSerial ' + serialOf(p) + '(' + (i === 0 ? 2 : 1) + ');');
       else add('SoftwareSerial ' + serialOf(p) + '(' + PC(p, 'pin2') + ', ' + PC(p, 'pin') + ');');
@@ -1843,7 +1873,7 @@ function generate(project, show) {
     if (p.type === 'maglock') add('  ' + N[p.id].v + '.set(' + (o.startLocked ? 'true);   // locked' : 'false);  // unlocked'));
     else add('  ' + N[p.id].v + '.set(' + (o.startOn ? 'true' : 'false') + ');');
   }
-  for (const p of servos) add('  ' + N[p.id].v + '.write(' + Math.min(180, Math.max(0, int(optsOf(p).startAngle, 0))) + ');');
+  for (const p of servos) { if (glides(p)) add('  ' + N[p.id].v + 'Glide.stop();'); add('  ' + N[p.id].v + '.write(' + Math.min(180, Math.max(0, int(optsOf(p).startAngle, 0))) + ');'); }
   for (const p of players) add('  ' + N[p.id].v + '.stop();');
   for (const p of strips) add('  ' + N[p.id].v + '.off();');
   for (const p of dimmers) add('  ' + N[p.id].v + '.set(' + Math.min(100, Math.max(0, int(optsOf(p).start, 0))) + ');');
@@ -1883,7 +1913,7 @@ function generate(project, show) {
         else if (d.kind === 'lock') lines.push('if (act == "lock") ' + v + '.set(true);', 'if (act == "unlock") ' + v + '.set(false);');
         else if (d.kind === 'level') lines.push('if (act == "set") ' + v + '.set(constrain(val, 0, 100));');
         else if (d.kind === 'strip') lines.push('if (act == "white") { ' + v + '.clear(); ' + v + '.add(0, ' + (Math.max(1, int(optsOf(d.p).count, 30)) - 1) + ', 0xFFFFFF, 0, 1000); ' + v + '.play(); }', 'if (act == "off") ' + v + '.off();');
-        else if (d.kind === 'angle') lines.push('if (act == "set") ' + v + '.write(constrain(val, 0, 180));');
+        else if (d.kind === 'angle') lines.push(glides(d.p) ? 'if (act == "set") ' + v + 'Glide.go(val, 0);' : 'if (act == "set") ' + v + '.write(constrain(val, 0, 180));');
         else if (d.kind === 'flag') lines.push('if (act == "set") ' + v + ' = true;', 'if (act == "clear") ' + v + ' = false;');
         else if (d.kind === 'mp3') lines.push('if (act == "play") ' + v + '.playMp3Folder(val < 1 ? 1 : val);', 'if (act == "stop") ' + v + '.stop();');
         else if (d.kind === 'press' || d.kind === 'hold') lines.push(
@@ -2169,9 +2199,11 @@ function generate(project, show) {
     for (const p of steppers) add('  if (!' + N[p.id].v + '.run()) ' + N[p.id].v + '.disableOutputs();');
     if (!bg.length) add();
   }
-  if (bg.length) {
-    add('  // Keep timed effects (pulses, blinks, fades, strip effects) running');
+  const gliders = servos.filter(glides);
+  if (bg.length || gliders.length) {
+    add('  // Keep timed effects (pulses, blinks, fades, strip effects, servo moves) running');
     for (const p of bg) add('  ' + N[p.id].v + '.update();');
+    for (const p of gliders) add('  ' + N[p.id].v + 'Glide.update();');
   }
   add('}');
   return L.join('\n');
@@ -2196,7 +2228,12 @@ function emitAction(add, N, a, part) {
   logLine(add, I, '  -> ' + part.name + ': ' + actLabel(part, a));
   const v = N[part.id].v, act = a.action;
   switch (part.type) {
-    case 'servo': add(I + v + '.write(' + Math.min(180, Math.max(0, int(a.value, 90))) + ');'); return;
+    case 'servo': {
+      const deg = Math.min(180, Math.max(0, int(a.value, 90))), ms = glideMs(a);
+      if (glides(part)) add(I + v + 'Glide.go(' + deg + ', ' + ms + ');' + (ms ? '   // over ' + fmtSec(a.value2) : ''));
+      else add(I + v + '.write(' + deg + ');');
+      return;
+    }
     case 'dfplayer':
       if (act === 'stop') add(I + v + '.stop();');
       else if (act === 'volume') add(I + v + '.volume(' + Math.min(30, Math.max(0, int(a.value, 20))) + ');');
@@ -2490,6 +2527,7 @@ function actLabel(part, a) {
   if (part.type === 'strip' && a.action === 'scene') v = ' (' + (a.segs || []).length + ' section' + ((a.segs || []).length === 1 ? '' : 's') + ')';
   else if (P && P.text) v = ' "' + (a.value || '') + '"';
   else if (P && !P.color && a.value != null && a.value !== '') v = ' ' + a.value + (P.unit && P.unit.length < 6 ? ' ' + P.unit : '');
+  if (a.action === 'angle' && glideMs(a) > 0) v += ' over ' + fmtSec(a.value2);
   return name + v;
 }
 // Everything Escape Runner needs: boards, the conditions boards report, and each scene's steps
