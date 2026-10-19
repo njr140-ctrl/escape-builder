@@ -1947,18 +1947,21 @@ function generate(project, show) {
   for (const p of digIns) {
     const pin = findPin(project.board, p.pin);
     const v = N[p.id].v, C = PC(p);
-    if (p.type === 'motion') add('  ' + v + '.begin(' + C + ', INPUT, false);');
-    else if (p.type === 'linkin') add('  ' + v + '.begin(' + C + ', INPUT, false);        // the other board drives this pin HIGH for "on"');
-    else if (pin.inputOnly) add('  ' + v + '.begin(' + C + ', INPUT, true);         // needs a 10k pull-up resistor to 3.3V');
-    else add('  ' + v + '.begin(' + C + ', INPUT_PULLUP, true);');
+    // "Flip on/off" in Parts: for hardware that reads the opposite way (a sensor that's on when it should be off)
+    const flip = !!optsOf(p).flip, lowOn = low => String(flip ? !low : low), note = flip ? '   // flipped: reads the other way round' : '';
+    if (p.type === 'motion') add('  ' + v + '.begin(' + C + ', INPUT, ' + lowOn(false) + ');' + note);
+    else if (p.type === 'linkin') add('  ' + v + '.begin(' + C + ', INPUT, ' + lowOn(false) + ');' + (note || '        // the other board drives this pin HIGH for "on"'));
+    else if (pin.inputOnly) add('  ' + v + '.begin(' + C + ', INPUT, ' + lowOn(true) + ');' + (note || '         // needs a 10k pull-up resistor to 3.3V'));
+    else add('  ' + v + '.begin(' + C + ', INPUT_PULLUP, ' + lowOn(true) + ');' + note);
   }
   for (const p of dials) add('  ' + N[p.id].v + '.begin(' + PC(p, 'pin') + ', ' + PC(p, 'pin2') + ', ' + Math.max(2, int(optsOf(p).steps, 20)) + ');   // ' + Math.max(2, int(optsOf(p).steps, 20)) + ' positions');
   if (readers.length) add('  SPI.begin();');
   for (const p of readers) add('  ' + N[p.id].v + '.begin();');
   for (const p of digOuts) {
     const o = optsOf(p);
-    const low = (p.type === 'relay' || p.type === 'maglock') && o.activeLow;
-    add('  ' + N[p.id].v + '.begin(' + PC(p) + ', ' + (low ? 'true' : 'false') + ');' + (low ? '   // relay module switches on when its pin is LOW' : ''));
+    const relayLow = (p.type === 'relay' || p.type === 'maglock') && o.activeLow, flipped = (p.type === 'light' || p.type === 'buzzer') && o.flip;
+    const low = relayLow || flipped;
+    add('  ' + N[p.id].v + '.begin(' + PC(p) + ', ' + (low ? 'true' : 'false') + ');' + (relayLow ? '   // relay module switches on when its pin is LOW' : flipped ? '   // flipped: on when its pin is LOW' : ''));
     const w = OUTPUT_WORDS[p.type] || ['on', 'off'];
     add('  ' + N[p.id].v + '.name = F(' + cstr(oneLine(p.name)) + '); ' + N[p.id].v + '.onWord = F(' + cstr(w[0]) + '); ' + N[p.id].v + '.offWord = F(' + cstr(w[1]) + ');');
   }
@@ -3003,13 +3006,14 @@ function partOpts(project, p) {
   const fs = fieldsOf(p);
   const multi = fs.length > 1 ? '<div class="pin-fields">' + fs.map(([f, role, need]) => pinSelect(project, p, f, need, roleText(p, role))).join('') + '</div>' : '';
   switch (p.type) {
-    case 'light': case 'buzzer': return cb('startOn', 'On at start');
+    case 'light': case 'buzzer': return cb('startOn', 'On at start') + cb('flip', 'Flip on/off');
+    case 'button': case 'switch': case 'magnet': case 'motion': case 'linkin': return cb('flip', 'Flip on/off');
     case 'relay': return cb('startOn', 'On at start') + cb('activeLow', 'Relay switches on LOW');
     case 'maglock': return cb('startLocked', 'Locked at start') + cb('activeLow', 'Relay switches on LOW');
     case 'dfplayer': return multi + optNum(p, 'volume', 'Volume', 'of 30', 0, 30);
     case 'servo': return motorType(p) + optNum(p, 'startAngle', 'Start angle', '°', 0, 180);
     case 'keypad': return optSel(p, 'layout', 'Layout', [['4x4', '4×4 (with A–D)'], ['4x3', '3×4 (phone style)']]) + multi;
-    case 'linkin': case 'linkout': return '';
+    case 'linkout': return '';
     case 'mqttin': case 'mqttout': return '<label class="grow">Topic <input class="field text mono" type="text" id="o-' + p.id + '-topic" data-k="opt-text" data-id="' + p.id + '" data-opt="topic" value="' + esc(o.topic || '') + '" placeholder="room1/seance" spellcheck="false" autocomplete="off"></label>';
     case 'rfid': case 'encoder': return multi + (p.type === 'encoder' ? optNum(p, 'steps', 'Positions', '', 2, 200) : '');
     case 'strip': return optNum(p, 'count', 'LEDs', '', 1, 1000) + optSel(p, 'density', 'Density', [[30, '30 per metre'], [60, '60 per metre'], [144, '144 per metre']]) + optNum(p, 'brightness', 'Brightness', 'of 255', 1, 255, 5) + stripMeta(p);
