@@ -636,12 +636,18 @@ const isEvPart = id => typeof id === 'string' && id.startsWith('__ev:');
 // Scene-only "parts": a game-master button, and HomeKit switches the runner shows in the Home app
 const isBtnPart = id => id === '__btn';
 const isHkPart = id => typeof id === 'string' && id.startsWith('__hk:');
-const isPseudo = id => isEvPart(id) || isBtnPart(id) || isHkPart(id) || isSpkPart(id) || isTvPart(id) || isStartPart(id);
+const isPseudo = id => isEvPart(id) || isBtnPart(id) || isHkPart(id) || isSpkPart(id) || isTvPart(id) || isStartPart(id) || isPhonePart(id);
 // Scene condition: the moment the game master presses Start game
 const isStartPart = id => id === '__start';
 // Sound and video play on the computer running Escape Runner: its speakers (USB sound cards) and the screen on its HDMI port
 const isSpkPart = id => typeof id === 'string' && id.startsWith('__spk:');
 const isTvPart = id => id === '__tv';
+// Phones in the room (a SIP phone, or an HT80x adapter with an old phone): Escape Runner rings one
+// straight over the network and plays a message when someone picks up
+const isPhonePart = id => typeof id === 'string' && id.startsWith('__phone:');
+const PHONE_ACTS = [['call', 'call and play']];
+const phonesOf = P => P.phones || [];
+const phoneOf = (P, id) => isPhonePart(id) ? phonesOf(P).find(x => x.id === id.slice(8)) || null : null;
 const SND_ACTS = [['sndplay', 'play sound'], ['sndstop', 'stop sound'], ['sndstopall', 'stop every sound']];
 const TV_ACTS = [['vidplay', 'show video'], ['vidstop', 'stop video']];
 const DEFAULT_SPK = { id: 'default', name: 'Default output' };
@@ -2593,6 +2599,14 @@ function compileShow(P) {
         } else steps.push({ kind: 'stopSound', fadeOutMs: fade, label: 'Stop every sound on every speaker' + (fade ? ' (fade out ' + fmtSec(a.fade) + ')' : '') });
         continue;
       }
+      if (isPhonePart(a.part)) {
+        const ph = phoneOf(P, a.part), file = mediaFile(a);
+        if (!ph || !file) continue;
+        const ring = Math.max(5, Math.round(num(a.ring, 30))), wait = !!a.wait;
+        steps.push({ kind: 'call', phone: ph.id, file, ringSeconds: ring, wait,
+          label: (ph.name || 'Phone') + ' \u00b7 Call and play ' + file + ' (rings up to ' + ring + ' s' + (wait ? ', wait for the call to end' : '') + ')' });
+        continue;
+      }
       if (isTvPart(a.part)) {
         const file = mediaFile(a);
         if (a.action === 'vidplay') {
@@ -2625,6 +2639,7 @@ function compileShow(P) {
   return { format: 'escape-runner-show', version: 2, name: P.name || 'Untitled show', timerMinutes: Math.max(1, num(P.timer, 60)),
     boards: P.boards.map(b => ({ id: b.id, slug: slug(b.name), name: b.name })), homekit: (P.homekit || []).map(x => ({ id: x.id, name: x.name || 'Switch', resetOn: !!x.resetOn })),
     speakers: (P.speakers || []).map(x => ({ id: x.id, name: x.name || x.id })),
+    phones: phonesOf(P).map(x => ({ id: x.id, name: x.name || 'Phone', address: String(x.address || '').trim(), port: Math.round(num(x.port, 5060)) || 5060 })),
     devices: P.boards.flatMap(b => devicesOf(b).map(d => ({ board: slug(b.name), key: d.key, name: d.p.name, kind: d.kind,
       type: d.p.type === 'dimmer' && optsOf(d.p).motor ? 'DC motor' : TYPES[d.p.type].label, max: d.kind === 'value' ? BOARDS[b.board].adcMax : undefined }))),
     watches, scenes, builtAt: new Date().toISOString() };
@@ -2640,6 +2655,7 @@ function showChecks(P) {
   const spk = (P.speakers || []).map(x => (x.name || '').trim().toLowerCase());
   if (spk.some(n => !n)) out.push('Show: give every speaker a name.');
   if (new Set(spk).size < spk.length) out.push('Show: two speakers have the same name.');
+  for (const ph of phonesOf(P)) if (!String(ph.address || '').trim()) out.push('Show: ' + (ph.name || 'a phone') + ' needs its address (the phone\u2019s IP address).');
   const slugs = {};
   for (const b of P.boards) (slugs[slug(b.name)] = slugs[slug(b.name)] || []).push(b.name);
   for (const k in slugs) if (slugs[k].length > 1) out.push('Boards ' + slugs[k].join(' and ') + ' need different names.');
@@ -2649,7 +2665,8 @@ function showChecks(P) {
     if (!s.then.length) out.push(nm + ' has no steps.');
     const hkGone = id => isHkPart(id) && !(P.homekit || []).some(x => x.id === id.slice(5));
     for (const c of s.when) if (hkGone(c.part) || (!isPseudo(c.part) && !boardOfPartIn(P, c.part))) out.push(nm + ' uses a part or switch that was removed.');
-    for (const a of s.then) if (hkGone(a.part) || (isSpkPart(a.part) && !speakerOf(P, a.part)) || (a.part !== '__sys' && !isPseudo(a.part) && !boardOfPartIn(P, a.part))) out.push(nm + ' controls a part, switch or speaker that was removed.');
+    if (s.then.some(a => isPhonePart(a.part) && phoneOf(P, a.part) && !mediaFile(a))) out.push(nm + ' has a phone call with no message file, so it is left out.');
+    for (const a of s.then) if (hkGone(a.part) || (isSpkPart(a.part) && !speakerOf(P, a.part)) || (isPhonePart(a.part) && !phoneOf(P, a.part)) || (a.part !== '__sys' && !isPseudo(a.part) && !boardOfPartIn(P, a.part))) out.push(nm + ' controls a part, switch or speaker that was removed.');
     if (s.then.some(a => (a.action === 'sndplay' || a.action === 'vidplay') && (isSpkPart(a.part) || isTvPart(a.part)) && !mediaFile(a))) out.push(nm + ' has a sound or video step with no file name, so it is left out.');
     if (s.then.some(a => activeLights(a).some(id => !canFlash((boardOfPartIn(P, id) || { parts: [] }).parts.find(x => x.id === id))))) out.push(nm + ' has lightning on a light that was removed (or is now a motor).');
     if (s.then.some(a => isSpkPart(a.part) && a.action === 'sndplay' && lightOnOf(a) && !lightIdsOf(a).length)) out.push(nm + ' has Lightning on with no light ticked.');
@@ -2912,7 +2929,8 @@ function importFile(file) {
       if (p && p.mode === 'show') {
         const boards = (p.boards || []).map((b, i) => ({ ...cleanSketch(b, 'Board ' + (i + 1)), board: 'esp32' }));
         if (!boards.length) throw new Error('shape');
-        np = { id: uid(), mode: 'show', name: String(p.name || 'Imported show'), timer: num(p.timer, 60), boards, active: boards[0].id, scenes: cleanRules(p.scenes), homekit: (p.homekit || []).filter(x => x && x.id).map(x => ({ id: String(x.id), name: String(x.name || 'Switch'), resetOn: !!x.resetOn })), speakers: (p.speakers || []).filter(x => x && x.id && x.id !== 'default').map(x => ({ id: String(x.id), name: String(x.name || x.id) })), wifi: { ...(p.wifi || {}) } };
+        np = { id: uid(), mode: 'show', name: String(p.name || 'Imported show'), timer: num(p.timer, 60), boards, active: boards[0].id, scenes: cleanRules(p.scenes), homekit: (p.homekit || []).filter(x => x && x.id).map(x => ({ id: String(x.id), name: String(x.name || 'Switch'), resetOn: !!x.resetOn })), speakers: (p.speakers || []).filter(x => x && x.id && x.id !== 'default').map(x => ({ id: String(x.id), name: String(x.name || x.id) })),
+          phones: (p.phones || []).filter(x => x && x.id).map(x => ({ id: String(x.id), name: String(x.name || 'Phone'), address: String(x.address || ''), port: Math.round(num(x.port, 5060)) || 5060 })), wifi: { ...(p.wifi || {}) } };
       } else np = { ...cleanSketch(p, 'Imported sketch'), id: uid() };
       S.projects.push(np); S.current = np.id; save(); renderAll(); toast('Opened ' + np.name);
     } catch (e) { toast('That file isn\u2019t an Escape Builder project'); }
@@ -3336,6 +3354,7 @@ function partSelect(project, dir, value, attrs, withSys) {
     if (value && value !== '__sys' && !isPseudo(value) && !project.parts.some(p => p.id === value)) html += '<option value="' + esc(value) + '" selected>(removed part)</option>';
     if (isHkPart(value) && !(P.homekit || []).some(x => '__hk:' + x.id === value)) html += '<option value="' + esc(value) + '" selected>(removed switch)</option>';
     if (isSpkPart(value) && !speakerOf(P, value)) html += '<option value="' + esc(value) + '" selected>(removed speaker)</option>';
+    if (isPhonePart(value) && !phoneOf(P, value)) html += '<option value="' + esc(value) + '" selected>(removed phone)</option>';
     if (!value) html += '<option value="" selected>Pick…</option>';
     for (const b of P.boards) {
       const list = b.parts.filter(p => fits(p.type));
@@ -3346,6 +3365,7 @@ function partSelect(project, dir, value, attrs, withSys) {
     if ((P.homekit || []).length) html += '<optgroup label="HomeKit switches">' + P.homekit.map(x => '<option value="__hk:' + x.id + '"' + (value === '__hk:' + x.id ? ' selected' : '') + '>HomeKit · ' + esc(x.name || 'Switch') + '</option>').join('') + '</optgroup>';
     if (dir === 'out') html += '<optgroup label="Sound and video (on Escape Runner\u2019s computer)">' + speakersOf(P).map(x => '<option value="__spk:' + x.id + '"' + (value === '__spk:' + x.id ? ' selected' : '') + '>Sound · ' + esc(x.name || x.id) + '</option>').join('') +
       '<option value="__tv"' + (value === '__tv' ? ' selected' : '') + '>Video · Screen (HDMI)</option></optgroup>';
+    if (dir === 'out' && phonesOf(P).length) html += '<optgroup label="Phones">' + phonesOf(P).map(x => '<option value="__phone:' + x.id + '"' + (value === '__phone:' + x.id ? ' selected' : '') + '>Phone · ' + esc(x.name || 'Phone') + '</option>').join('') + '</optgroup>';
     if (dir === 'in') html += '<optgroup label="Boards telling the show">' + P.boards.map(b => '<option value="__ev:' + b.id + '"' + (value === '__ev:' + b.id ? ' selected' : '') + '>' + esc(b.name) + ' reports…</option>').join('') + '</optgroup>';
     if (withSys) html += '<optgroup label="Game"><option value="__sys"' + (value === '__sys' ? ' selected' : '') + '>Game</option></optgroup>';
     return html + '</select>';
@@ -3469,8 +3489,17 @@ function partById(id) {
 // A little light that shows how a flicker or blink will look (see animateDots)
 // varied: only a Dimmer with Varied brightness flickers through brightness levels; Lights flicker fully on and off
 const lightDot = (a, varied) => '<span class="lt-dot" aria-hidden="true" title="Preview" data-fx="' + a.action + '" data-speed="' + esc(a.value) + '" data-varied="' + (varied ? 1 : 0) + '" data-on="' + esc(a.value2 == null ? 0.3 : a.value2) + '" data-off="' + esc(a.value3 == null ? 0.3 : a.value3) + '" data-times="' + (a.forever ? 0 : esc(a.value)) + '"></span>';
+// A phone call step: the message file, how long it rings, and whether the scene waits for the call to end
+function phoneInputs(r, j, a) {
+  const base = 'data-rid="' + r.id + '" data-j="' + j + '"', id = 'a-' + r.id + '-' + j + '-m';
+  return '<input class="field text media-file" type="text" id="' + id + 'file" data-k="act-m" data-f="file" ' + base + ' value="' + esc(a.file) + '" placeholder="phone-call.mp3" aria-label="Message file" spellcheck="false" autocomplete="off">' +
+    pair('<span class="unit">rings up to</span><input class="field num" type="number" min="5" step="5" id="' + id + 'ring" data-k="act-m" data-f="ring" ' + base + ' value="' + esc(a.ring == null ? 30 : a.ring) + '" aria-label="Ring for up to seconds"><span class="unit">s</span>') +
+    '<label class="toggle"><input type="checkbox" id="' + id + 'wait" data-k="act-mc" data-f="wait" ' + base + (a.wait ? ' checked' : '') + '>Wait for the call to end</label>' +
+    infoBubble('Phone calls', '<p>Escape Runner rings this phone over the network. When someone picks up, it plays the message, then hangs up. If nobody answers, it stops ringing after the time you set.</p><p>Upload the message in Escape Runner\u2019s <b>Media</b> panel and type its name exactly (capitals count). Phone-quality sound works best: clear speech, not too quiet.</p><p><b>Wait for the call to end</b> holds the scene until the call is over.</p>');
+}
 function actInputs(r, j, a) {
   if (isSpkPart(a.part) || isTvPart(a.part)) return mediaInputs(r, j, a);
+  if (isPhonePart(a.part)) return phoneInputs(r, j, a);
   const part = a.part && a.part !== '__sys' ? partById(a.part) : null;
   if (part && (a.action === 'flick' || (a.action === 'blink' && (part.type === 'light' || part.type === 'buzzer')))) {
     const base = 'data-rid="' + r.id + '" data-j="' + j + '"', id = 'a-' + r.id + '-' + j + '-v';
@@ -3523,7 +3552,7 @@ function renderRule(project, r, i, numLabel) {
   }).join('');
   const acts = r.then.map((a, j) => {
     const part = a.part === '__sys' ? null : project.parts.find(p => p.id === a.part);
-    const list = a.part === '__sys' ? sysActs(!!project.isScenes, isShow()) : isHkPart(a.part) ? HK_ACTS : isSpkPart(a.part) ? SND_ACTS : isTvPart(a.part) ? TV_ACTS : part ? TYPES[part.type].acts : [];
+    const list = a.part === '__sys' ? sysActs(!!project.isScenes, isShow()) : isHkPart(a.part) ? HK_ACTS : isSpkPart(a.part) ? SND_ACTS : isTvPart(a.part) ? TV_ACTS : isPhonePart(a.part) ? PHONE_ACTS : part ? TYPES[part.type].acts : [];
     const base = 'data-rid="' + r.id + '" data-j="' + j + '"';
     return '<div class="row" data-drag>' + grip('act', r, j, r.then.length) + '<span class="and">' + (j ? 'then' : '') + '</span>' +
       partSelect(project, 'out', a.part, 'id="a-' + r.id + '-' + j + '-p" data-k="act-part" ' + base + ' aria-label="Output"', true) +
@@ -3610,6 +3639,19 @@ function speakersCard(P) {
     '<p class="hint" style="margin:12px 0 0">Add one for each USB sound card on the computer running Escape Runner. On a Pi, <code>setup-speakers.sh</code> asks you to name each card: use the names shown here. In scenes, pick <b>Sound · a speaker</b> or <b>Video · Screen</b> and type a file name from Escape Runner\u2019s Media panel.</p>' +
   '</section>';
 }
+function phonesCard(P) {
+  const list = phonesOf(P);
+  return '<section class="card"><div class="card-head"><h2>Phones</h2><span class="sub">Escape Runner can ring a phone in the room and play a message.</span>' +
+    '<button class="btn end" data-act="add-phone">' + icon('plus', 2) + 'Add phone</button></div>' +
+    (list.length ? '<div class="hk-list">' + list.map(x => '<div class="hk-row">' +
+      '<input class="field" id="ph-' + x.id + '" data-k="ph-name" data-pid="' + x.id + '" value="' + esc(x.name) + '" placeholder="Trimline" aria-label="Phone name">' +
+      '<input class="field mono" id="ph-' + x.id + '-addr" data-k="ph-addr" data-pid="' + x.id + '" value="' + esc(x.address || '') + '" placeholder="192.168.0.50" aria-label="Phone\u2019s IP address" spellcheck="false" autocomplete="off">' +
+      '<input class="field num" type="number" min="1" max="65535" id="ph-' + x.id + '-port" data-k="ph-port" data-pid="' + x.id + '" value="' + esc(x.port || 5060) + '" aria-label="Port" title="5060 for an HT80x\u2019s first phone socket, 5062 for its second">' +
+      '<button class="icon-btn" data-act="del-phone" data-pid="' + x.id + '" aria-label="Remove phone">' + icon('x', 2) + '</button></div>').join('') + '</div>'
+      : '<div class="empty">No phones yet. Add one to ring a phone during a scene.</div>') +
+    '<p class="hint" style="margin:12px 0 0">Works with any SIP phone on the same network, including a Grandstream HT801/HT802 with an old phone plugged in. It keeps working with your normal phone service (like voip.ms). Find the IP address on an HT80x by dialing <b>***</b> then <b>02</b> on the phone. Port <b>5060</b> is its first phone socket, <b>5062</b> the second. In scenes, pick <b>Phone · a phone</b>, then type the message file from Escape Runner\u2019s Media panel. Escape Runner\u2019s Media panel has a <b>Test call</b> button for each phone.</p>' +
+  '</section>';
+}
 function scenesCard(P) {
   const own = sceneOwner();
   return '<section class="card scenes-card"><div class="card-head"><h2>Scenes</h2><span class="sub">Played by Escape Runner across every board.</span>' +
@@ -3649,7 +3691,7 @@ function renderEditor() {
       '</div></div></div></section>';
   $('editor').innerHTML = top +
     wifiCard(p) +
-    (show ? homekitCard(P) + speakersCard(P) : '') +
+    (show ? homekitCard(P) + speakersCard(P) + phonesCard(P) : '') +
     '<section class="card parts-card' + (folded.has('sec:parts') ? ' folded' : '') + '"><div class="card-head">' + foldBtn('sec:parts', 'parts') + '<h2>' + (show ? esc(p.name) + ' · parts' : 'Parts') + '</h2>' +
       (folded.has('sec:parts') ? '<span class="sub">' + p.parts.length + ' part' + (p.parts.length === 1 ? '' : 's') + (p.parts.length ? ': ' + esc(p.parts.map(x => x.name).join(', ')) : '') + '</span>' : '<span class="sub">Tap a part to add it. Pins are picked for you.</span>') + '</div>' +
       '<div class="palette">' +
@@ -3952,6 +3994,15 @@ document.addEventListener('click', e => {
       return;
     }
     case 'del-spk': { const P = proj(); P.speakers = (P.speakers || []).filter(x => x.id !== b.dataset.sid); save(); renderAll(); return; }
+    case 'add-phone': {
+      const P = proj(), list = P.phones || (P.phones = []);
+      let n = 1; while (list.some(x => x.id === 'phone' + n)) n++;
+      const ph = { id: 'phone' + n, name: n === 1 ? 'Phone' : 'Phone ' + n, address: '', port: 5060 };
+      list.push(ph); save(); renderAll();
+      const el = $('ph-' + ph.id); if (el) el.select();
+      return;
+    }
+    case 'del-phone': { const P = proj(); P.phones = phonesOf(P).filter(x => x.id !== b.dataset.pid); save(); renderAll(); return; }
     case 'del-hk': { const P = proj(); P.homekit = (P.homekit || []).filter(x => x.id !== b.dataset.hid); save(); renderAll(); return; }
     case 'add-part': {
       const type = b.dataset.type;
@@ -4137,6 +4188,12 @@ document.addEventListener('input', e => {
   else if (k === 'act-value') { rule().then[+el.dataset.j].value = el.value; refreshDot(el, rule().then[+el.dataset.j]); }
   else if (k === 'act-value2' || k === 'act-value3') { rule().then[+el.dataset.j][k.slice(4)] = el.value; refreshDot(el, rule().then[+el.dataset.j]); }
   else if (k === 'act-m') rule().then[+el.dataset.j][el.dataset.f] = el.value;
+  else if (k === 'ph-name' || k === 'ph-addr' || k === 'ph-port') {
+    const ph = phonesOf(proj()).find(x => x.id === el.dataset.pid);
+    if (ph && k === 'ph-name') ph.name = el.value;
+    else if (ph && k === 'ph-addr') ph.address = el.value.trim();
+    else if (ph) ph.port = Math.round(num(el.value, 5060));
+  }
   else if (k === 'spk-name') { const sp = (proj().speakers || []).find(x => x.id === el.dataset.sid); if (sp) sp.name = el.value; }
   else if (/^seg-(from|to|color|dur|on|off|onS|offS|spd|head|full|bri)$/.test(k)) {
     const sg = rule().then[+el.dataset.j].segs[+el.dataset.s];
@@ -4151,7 +4208,7 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   const el = e.target, k = el.dataset.k, p = el.dataset.rid ? ownerOf(el.dataset.rid) : cur();
   if (!k) return;
-  if ((k === 'pname' && isShow()) || k === 'hk-name' || k === 'spk-name') { renderAll(); return; }   // new board name in the tabs and pickers
+  if ((k === 'pname' && isShow()) || k === 'hk-name' || k === 'spk-name' || k === 'ph-name') { renderAll(); return; }   // new board name in the tabs and pickers
   if (k === 'project') { S.current = el.value; ui.confirmDelete = false; save(false); renderAll(); return; }
   if (k === 'part-name' || k === 'opt-num' || k === 'rule-repeat') { renderAll(); return; }   // refresh labels and limits
   const rule = () => findRule(el.dataset.rid);
@@ -4218,7 +4275,7 @@ document.addEventListener('change', e => {
   }
   else if (k === 'act-part') {
     const old = rule().then[+el.dataset.j], id = old.id || uid();
-    rule().then[+el.dataset.j] = isHkPart(el.value) ? { id, part: el.value, action: 'hkpulse' } : isSpkPart(el.value) ? { id, part: el.value, action: 'sndplay', file: '' } : isTvPart(el.value) ? { id, part: el.value, action: 'vidplay', file: '' } : el.value === '__sys' ? (p.isScenes ? { id, part: '__sys', action: 'wait', value: 3 } : { id, part: '__sys', action: 'message', value: PARAM.message.def }) : { ...defaultAct(p, el.value), id };
+    rule().then[+el.dataset.j] = isHkPart(el.value) ? { id, part: el.value, action: 'hkpulse' } : isSpkPart(el.value) ? { id, part: el.value, action: 'sndplay', file: '' } : isTvPart(el.value) ? { id, part: el.value, action: 'vidplay', file: '' } : isPhonePart(el.value) ? { id, part: el.value, action: 'call', file: '', ring: 30 } : el.value === '__sys' ? (p.isScenes ? { id, part: '__sys', action: 'wait', value: 3 } : { id, part: '__sys', action: 'message', value: PARAM.message.def }) : { ...defaultAct(p, el.value), id };
   }
   else if (k === 'act-mc') {
     const a = rule().then[+el.dataset.j];
