@@ -235,7 +235,7 @@ function importFile(file) {
       const p = data && data.project ? data.project : data;
       if (data && data.format === 'escape-runner-show') { toast('That\u2019s a show file for Escape Runner. Open the show\u2019s Escape Builder project file instead.'); return; }
       const cleanRules = list => (list || []).filter(r => r && Array.isArray(r.when) && Array.isArray(r.then)).map(r => ({ id: String(r.id || uid()), name: String(r.name || ''), once: !!r.once, loop: !!r.loop, ambient: !!r.ambient,
-        match: ['any', 'order', 'some'].includes(r.match) ? r.match : 'all', need: num(r.need, 2), repeat: num(r.repeat, 0) || '', timeout: num(r.timeout, 0) || '', when: r.when, then: r.then }));
+        match: ['any', 'order', 'some'].includes(r.match) ? r.match : 'all', need: num(r.need, 2), whileTrue: !!r.whileTrue, repeat: num(r.repeat, 0) || '', timeout: num(r.timeout, 0) || '', when: r.when, then: r.then }));
       const cleanSketch = (x, fallback) => {
         if (!x || !Array.isArray(x.parts) || !Array.isArray(x.rules)) throw new Error('shape');
         return { id: String(x.id || uid()), name: String(x.name || fallback), board: BOARDS[x.board] ? x.board : 'esp32',
@@ -885,6 +885,7 @@ function renderRule(project, r, i, numLabel) {
   }).join('');
   const loopOn = !project.isScenes && match !== 'order' && !!r.loop;   // board rule: start over when the steps finish
   const repeatOn = match !== 'order' && (num(r.repeat, 0) > 0 || loopOn);
+  const whileOn = !project.isScenes && match !== 'order' && !!r.whileTrue;   // board rule: undo it when it stops being true
   const startOver = match === 'order' && r.when.length > 1
     ? '<label class="start-over">Start over if players pause <input class="field num" type="number" min="0" step="1" placeholder="—" id="r-' + r.id + '-timeout" data-k="rule-timeout" data-rid="' + r.id + '" value="' + esc(r.timeout || '') + '" aria-label="Seconds"> s between steps</label>' : '';
   const foot = match === 'order' || project.isScenes ? '' :
@@ -899,7 +900,8 @@ function renderRule(project, r, i, numLabel) {
     '<div class="rule-head">' + handle + foldBtn(r.id, no.toLowerCase()) + '<span class="rule-no' + (project.isScenes ? (r.ambient ? ' ambient' : ' scene') : '') + '">' + no + '</span>' +
     '<input class="rule-name" id="r-' + r.id + '-name" data-k="rule-name" data-rid="' + r.id + '" value="' + esc(r.name) + '" placeholder="' + (project.isScenes ? 'Name this scene' : 'Name this rule') + '" aria-label="Name">' +
     sum +
-    '<label class="toggle' + (repeatOn ? ' off' : '') + '"' + (repeatOn ? ' title="Repeating rules keep firing, so “Only once” is ignored"' : '') + '><input type="checkbox" id="r-' + r.id + '-once" data-k="rule-once" data-rid="' + r.id + '"' + (r.once && !repeatOn ? ' checked' : '') + (repeatOn ? ' disabled' : '') + '>Only once</label>' +
+    '<label class="toggle' + (repeatOn || whileOn ? ' off' : '') + '"' + (repeatOn ? ' title="Repeating rules keep firing, so “Only once” is ignored"' : whileOn ? ' title="“Only while true” rules switch on and off as often as their conditions change"' : '') + '><input type="checkbox" id="r-' + r.id + '-once" data-k="rule-once" data-rid="' + r.id + '"' + (r.once && !repeatOn && !whileOn ? ' checked' : '') + (repeatOn || whileOn ? ' disabled' : '') + '>Only once</label>' +
+    (!project.isScenes && match !== 'order' ? '<label class="toggle" title="When its conditions stop being true, put back what it did: lights and signals off, maglocks locked, flags cleared, sounds stopped"><input type="checkbox" id="r-' + r.id + '-while" data-k="rule-while" data-rid="' + r.id + '"' + (whileOn ? ' checked' : '') + '>Only while true</label>' : '') +
     (project.isScenes ? '<label class="toggle" title="When the last step finishes, start again from the first, until the scene is stopped or the game ends"><input type="checkbox" id="r-' + r.id + '-loop" data-k="rule-loop" data-rid="' + r.id + '"' + (r.loop ? ' checked' : '') + '>Repeat</label>' +
       '<label class="toggle" title="Background scenes like rain, music or a storm: numbered separately from the story, and listed apart on Escape Runner"><input type="checkbox" id="r-' + r.id + '-ambient" data-k="rule-ambient" data-rid="' + r.id + '"' + (r.ambient ? ' checked' : '') + '>Ambient</label>' : '') +
     '<button class="icon-btn dup" data-act="dup-rule" data-rid="' + r.id + '" aria-label="Duplicate rule" title="Duplicate rule">' + icon('copy', 1.9) + '</button>' +
@@ -1573,6 +1575,7 @@ document.addEventListener('change', e => {
     }
   }
   else if (k === 'rule-once') rule().once = el.checked;
+  else if (k === 'rule-while') rule().whileTrue = el.checked;
   else if (k === 'rule-loop') { rule().loop = el.checked; if (el.checked && !p.isScenes) rule().once = false; }   // a rule that starts over can't also be once-only
   else if (k === 'rule-ambient') rule().ambient = el.checked;
   else if (k === 'cond-holdon') { const c = rule().when[+el.dataset.j]; c.holdOn = el.checked; c.hold = el.checked ? (num(c.hold, 0) > 0 ? c.hold : 1) : ''; }

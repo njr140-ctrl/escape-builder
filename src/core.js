@@ -492,7 +492,9 @@ function ruleSummaries(b) {
     const when = r.match === 'order' ? conds.map(x => condText(b, x.c)).join(', then ')
       : r.match === 'some' ? 'at least ' + needOf(r, conds.length) + ' of: ' + conds.map(x => condText(b, x.c)).join(', ')
       : conds.map((x, k) => (k ? ' ' + joinOf(x.c) + ' ' : '') + condText(b, x.c)).join('');
-    return { n: i + 1, name: String(r.name || ''), when, then: acts.map(({ a, part }) => part.type === '__sys' ? sysText(a) : part.name + ': ' + actLabel(part, a)), once: !!r.once };
+    const whileTrue = !!r.whileTrue && r.match !== 'order';
+    return { n: i + 1, name: String(r.name || ''), when, then: acts.map(({ a, part }) => part.type === '__sys' ? sysText(a) : part.name + ': ' + actLabel(part, a)).concat(whileTrue ? ['undone when no longer true'] : []),
+      once: !!r.once && !whileTrue };
   }).filter(Boolean);
 }
 // For a board in a show: the scene conditions it watches, and the scene steps it carries out
@@ -1389,7 +1391,9 @@ function generate(project, show) {
     x.loop = x.match !== 'order' && !!x.r.loop;
     x.repeat = !x.loop && x.match !== 'order' && num(x.r.repeat, 0) > 0 ? msOf(x.r.repeat) : 0;
     x.timeout = x.match === 'order' && num(x.r.timeout, 0) > 0 ? msOf(x.r.timeout) : 0;
-    x.once = !!x.r.once && !x.repeat && !x.loop;
+    // "Only while true": when the conditions stop being true, undo what the rule did
+    x.whileTrue = !!x.r.whileTrue && x.match !== 'order';
+    x.once = !!x.r.once && !x.repeat && !x.loop && !x.whileTrue;
     if (x.loop) {
       // waits after the last action are the pause before starting over (with no waits at all, half a second)
       let tail = 0, tailMax = 0;
@@ -1412,6 +1416,7 @@ function generate(project, show) {
         if (x.timeout) add('unsigned long rule' + x.n + 'LastStep = 0;');
       }
       add('bool rule' + x.n + 'Was = true;');
+      if (x.whileTrue) add('bool rule' + x.n + 'On = false;     // "only while true": it has fired and not been undone yet');
       if (x.once) add('bool rule' + x.n + 'Done = false;   // "only once" rule');
       if (x.repeat || x.loop) add('unsigned long rule' + x.n + 'AgainAt = 0;   // ' + (x.loop ? 'start over while still true' : 'next repeat while still true'));
       for (let k = 2; k <= x.stages.length; k++) add('unsigned long rule' + x.n + 'Step' + k + 'At = 0;   // when step ' + k + ' runs (0 = not waiting)');
@@ -1457,6 +1462,7 @@ function generate(project, show) {
   for (const p of flags) add('  ' + N[p.id].v + ' = false;');
   for (const x of live) {
     add('  rule' + x.n + 'Was = true;');
+    if (x.whileTrue) add('  rule' + x.n + 'On = false;');
     if (x.once) add('  rule' + x.n + 'Done = false;');
     if (x.repeat || x.loop) add('  rule' + x.n + 'AgainAt = 0;');
     for (let k = 2; k <= x.stages.length; k++) add('  rule' + x.n + 'Step' + k + 'At = 0;');
@@ -1717,6 +1723,7 @@ function generate(project, show) {
     const said = 'Rule ' + n + (oneLine(x.r.name) ? ' (' + oneLine(x.r.name) + ')' : '');   // how the log names this rule
     logLine(add, '    ', said + ' fired');
     if (SH) add('    ruleFired(' + n + ');');
+    if (x.whileTrue) add('    rule' + n + 'On = true;');
     const emit = stage => { for (const { a, part } of stage.acts) emitAction(add, N, a, part); };
     const scheduleNext = k => {
       const nx = x.stages[k];
@@ -1729,6 +1736,18 @@ function generate(project, show) {
     const startOver = () => add('    rule' + n + 'AgainAt = later(' + x.loopGap + ');   // ' + (x.loopTail ? 'wait ' + x.loopTail + ', then ' : '') + 'start over if still true');
     if (x.loop && x.stages.length === 1) startOver();
     add('  }');
+    if (x.whileTrue) {
+      // No longer true: stop any steps still waiting, and put each output it changed back the other way
+      add('  if (!rule' + n + ' && rule' + n + 'On) {   // only while true: undo it');
+      add('    rule' + n + 'On = false;');
+      logLine(add, '    ', said + ': no longer true, undoing it');
+      for (let k = 2; k <= x.stages.length; k++) add('    rule' + n + 'Step' + k + 'At = 0;');
+      if (x.repeat || x.loop) add('    rule' + n + 'AgainAt = 0;');
+      const last = new Map();   // the last thing the rule did to each part decides how to undo it
+      for (const st of x.stages) for (const { a, part } of st.acts) if (part.type !== '__sys') last.set(part.id, { a, part });
+      for (const { a, part } of last.values()) undoAction(add, N, a, part);
+      add('  }');
+    }
     add('  rule' + n + 'Was = rule' + n + ';');
     for (let k = 2; k <= x.stages.length; k++) {
       add('  if (due(rule' + n + 'Step' + k + 'At)) {');
@@ -1796,6 +1815,30 @@ const logVal = (add, I, text, expr) => add(I + 'if (LOG) { logTime(); Serial.pri
 const INPUT_WORDS = { button: ['pressed', 'released'], switch: ['on', 'off'], magnet: ['senses a magnet', 'magnet gone'], motion: ['motion', 'no motion'], linkin: ['signal on', 'signal off'] };
 // What an output reads as when its pin turns on / off
 const OUTPUT_WORDS = { maglock: ['locked', 'unlocked'], linkout: ['signal on', 'signal off'] };
+// "Only while true": the opposite of what an action did, so the output goes back when the rule stops being true
+function undoAction(add, N, a, part) {
+  const I = '    ', v = N[part.id].v, act = a.action;
+  const say = text => logLine(add, I, '  -> ' + part.name + ': ' + text);
+  switch (part.type) {
+    case 'light': case 'relay': case 'buzzer': case 'linkout': {
+      const on = act === 'off';
+      const w = (OUTPUT_WORDS[part.type] || ['on', 'off'])[on ? 0 : 1];
+      say(w); add(I + v + '.set(' + (on ? 'true' : 'false') + ');'); return;
+    }
+    case 'maglock': {
+      const lock = act !== 'lock';
+      say(lock ? 'lock again' : 'unlock'); add(I + v + '.set(' + (lock ? 'true);    // lock' : 'false);   // unlock')); return;
+    }
+    case 'flag': say(act === 'fclear' ? 'set again' : 'clear'); add(I + v + ' = ' + (act === 'fclear' ? 'true' : 'false') + ';'); return;
+    case 'dimmer': if (act !== 'off') { say('turn off'); add(I + v + '.set(0);'); } return;
+    case 'strip': if (act !== 'off') { say('turn off'); add(I + v + '.off();'); } return;
+    case 'dfplayer': if (act === 'play' || act === 'loop') { say('stop'); add(I + v + '.stop();'); } return;
+    case 'servo': {
+      const start = Math.min(180, Math.max(0, int(optsOf(part).startAngle, 0)));
+      say('back to ' + start + '\u00b0'); add(I + v + (glides(part) ? 'Glide.go(' + start + ', 0);' : '.write(' + start + ');')); return;
+    }
+  }
+}
 function emitAction(add, N, a, part) {
   const I = '    ';
   if (part.type === '__sys') {
