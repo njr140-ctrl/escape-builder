@@ -257,7 +257,9 @@ const MEGA_RX = ['D10', 'D11', 'D12', 'D13', 'D50', 'D51', 'D52', 'D53', 'A8', '
 // What a pin's role reads as on screen. The generated code keeps the short role in its names (MP3_PLAYER_TX_PIN).
 // The MP3 player is labelled by its own pins (what you actually connect to), with the resistor where it goes:
 // the board's TX pin goes to the player's RX through 1 kOhm; the player's TX goes straight to the board's RX pin.
-const ROLE_TEXT = { dfplayer: { TX: { text: 'Player RX', resistor: '1 k\u03a9' }, RX: { text: 'Player TX' } } };
+// Always named from the player's side, as "to the player's RX pin", because ESP32 boards print RX2/TX2 on their own pins
+// and the two are easy to mix up.
+const ROLE_TEXT = { dfplayer: { TX: { text: 'to player\u2019s RX', pin: 'RX', resistor: '1 k\u03a9' }, RX: { text: 'to player\u2019s TX', pin: 'TX' } } };
 const roleInfo = (p, role) => (p && (ROLE_TEXT[p.type] || {})[role]) || null;
 // short: just the player's pin (the diagram draws the resistor itself)
 const roleText = (p, role, short) => { const r = roleInfo(p, role); return r ? r.text + (r.resistor && !short ? ' (via ' + r.resistor + ')' : '') : role; };
@@ -350,7 +352,8 @@ function isWired(project, p) {
 function pinLabel(project, p) {
   const fs = fieldsOf(p);
   const lab = f => { const x = findPin(project.board, p[f]); return x ? x.label : '?'; };
-  let s = fs.length === 1 ? lab(fs[0][0]) : fs.map(([f, role]) => roleText(p, role) + (roleInfo(p, role) ? ' \u2192 ' : ' ') + lab(f)).join(', ');
+  const sideOf = role => { const r = roleInfo(p, role); return 'player\u2019s ' + r.pin + ' pin' + (r.resistor ? ' (via ' + r.resistor + ')' : ''); };
+  let s = fs.length === 1 ? lab(fs[0][0]) : fs.map(([f, role]) => roleInfo(p, role) ? lab(f) + ' \u2192 ' + sideOf(role) : role + ' ' + lab(f)).join(', ');
   const bus = TYPES[p.type].bus;
   if (bus) s = (s ? s + ' + ' : '') + BUSES[bus].label + ' (' + BUSES[bus][project.board].map(([id, r]) => r + ' ' + findPin(project.board, id).label).join(', ') + ')';
   if (TYPES[p.type].esp32Only) return 'Wi-Fi · ' + (optsOf(p).topic || 'no topic');
@@ -1881,6 +1884,9 @@ function onStartupPin(project, p) {
 function checks(project) {
   const out = [];
   const B = BOARDS[project.board];
+  // An MP3 player wired against the ESP32's printed RX2/TX2 labels works, but is easy to mix up
+  if (B.family === 'esp32') for (const p of project.parts) if (p.type === 'dfplayer' && (p.pin === 'G16' || p.pin2 === 'G17'))
+    out.push(p.name + ': most ESP32 boards print \u201cRX2\u201d on GPIO 16 and \u201cTX2\u201d on GPIO 17, but here they\u2019re used the other way round. It works if you wire exactly as shown (GPIO ' + (p.pin || '').slice(1) + ' to the player\u2019s RX pin), but it\u2019s easy to mix up. In Parts, swap them: player\u2019s RX on GPIO 17, player\u2019s TX on GPIO 16.');
   for (const p of project.parts) if (onStartupPin(project, p)) out.push(p.name + ' is on D13, which blinks a few times when the board powers up or resets, so it may briefly switch on. Move it to another pin.');
   const wifiParts = project.parts.filter(p => TYPES[p.type].esp32Only);
   if (wifiParts.length && B.family !== 'esp32') out.push('Wi-Fi messages need an ESP32. Switch the board to ESP32 to include ' + wifiParts.map(p => p.name).join(', ') + '.');
@@ -1987,7 +1993,10 @@ function wiringFor(project, p) {
       tips.push('Use an active buzzer (it beeps on its own when powered). Passive ones need a tone signal.');
       break;
     case 'dfplayer':
-      steps.push('Player\u2019s RX to ' + L('pin') + ', with a 1 kΩ resistor in that wire (between the player\u2019s RX and ' + L('pin') + ').', 'Player\u2019s TX straight to ' + L('pin2') + ' (no resistor).', 'Player\u2019s VCC (or +5V) to 5V, GND to GND.', 'Speaker (up to 3 W) to the speaker terminals (SPK_1 and SPK_2 on a DFPlayer Mini).');
+      { const printed = f => { const x = findPin(project.board, p[f]); return x && x.alias ? ' (the pin printed \u201c' + x.alias + '\u201d on most boards)' : ''; };
+        steps.push('The pin marked RX on the MP3 player \u2192 ' + L('pin') + printed('pin') + ', with a 1 kΩ resistor in that wire.',
+          'The pin marked TX on the MP3 player \u2192 ' + L('pin2') + printed('pin2') + ', straight (no resistor).',
+          'The player\u2019s VCC \u2192 5V (VIN on an ESP32), not 3.3V. GND \u2192 GND.', 'Speaker (up to 3 W) \u2192 the player\u2019s SPK_1 and SPK_2 (not GND).'); }
       tips.push('SD card: FAT32, with a folder named mp3 holding 0001.mp3, 0002.mp3 … Track 1 is mp3/0001.mp3. Files are found by name, so the order you copy them doesn\u2019t matter. You can add words after the number, like 0001 thunder.mp3.');
       tips.push('For a big room, take DAC_R / DAC_L into an amplifier instead of using SPK pins.');
       break;

@@ -1086,7 +1086,8 @@ function boardDiagram(project) {
   const L = place(H.left), R = place(H.right);
   const bottom = Math.max(L.length ? L[L.length - 1].y : 0, R.length ? R[R.length - 1].y : 0) + 22;
   const onHeader = new Set(H.left.concat(H.right));
-  const textOf = a => a.part ? a.part.name + (fieldsOf(a.part).length > 1 && a.role ? ' · ' + roleText(a.part, a.role, true) : '') : a.users.map(u => u.name).join(', ') + ' · ' + a.role;
+  // MP3 player wires name the pin they go to on the player: "Cabinet MP3 · its RX pin"
+  const textOf = a => a.part ? a.part.name + (fieldsOf(a.part).length > 1 && a.role ? ' · ' + (roleInfo(a.part, a.role) ? 'its ' + roleInfo(a.part, a.role).pin + ' pin' : roleText(a.part, a.role, true)) : '') : a.users.map(u => u.name).join(', ') + ' · ' + a.role;
   const colorOf = a => a.part ? WIRE[TYPES[a.part.type].kind] : WIRE.bus;
   const trunc = s => s.length > 30 ? s.slice(0, 29) + '…' : s;
   let s = '<svg viewBox="0 0 ' + W + ' ' + (bottom + 16) + '" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, ui-monospace, monospace" role="img" aria-label="Pin diagram for ' + esc(BOARDS[board].label) + '">';
