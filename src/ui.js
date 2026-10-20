@@ -259,6 +259,29 @@ function importFile(file) {
   reader.readAsText(file);
 }
 
+// Number boxes accept any value typed into them. Left to itself the browser only allows values a whole
+// number of steps from the minimum (a 0.1 minimum with 0.5 steps rejects 1.5), so each box keeps its
+// step in data-step for the arrow keys, and tells the browser "any".
+function freeNumbers(root) {
+  for (const el of root.querySelectorAll('input[type="number"]:not([step="any"])')) {
+    el.dataset.step = el.getAttribute('step') || '1';
+    el.setAttribute('step', 'any');
+  }
+}
+new MutationObserver(() => freeNumbers(document)).observe(document.documentElement, { childList: true, subtree: true });
+document.addEventListener('keydown', e => {
+  const el = e.target;
+  if (!(el instanceof HTMLInputElement) || el.type !== 'number' || !el.dataset.step || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown')) return;
+  e.preventDefault();
+  const step = parseFloat(el.dataset.step) || 1;
+  let v = (parseFloat(el.value) || 0) + (e.key === 'ArrowUp' ? step : -step);
+  if (el.min !== '') v = Math.max(parseFloat(el.min), v);
+  if (el.max !== '') v = Math.min(parseFloat(el.max), v);
+  el.value = String(Math.round(v * 1000) / 1000);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}, true);
+
 // ───────────────────────── Render ─────────────────────────
 const $ = id => document.getElementById(id);
 function renderProjects() {
