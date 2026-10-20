@@ -1,0 +1,12 @@
+const fs=require("fs");
+eval(fs.readFileSync(process.argv[2],"utf8")+";globalThis.G={generate,defaultOpts,assignPins,compileShow}");
+let n=0; const uid=()=>"id"+(++n);
+const b={id:"b1",name:"Generator",board:"esp32",parts:[],rules:[]};
+const mk=(t,nm)=>{const p={id:uid(),type:t,name:nm,opts:G.defaultOpts(t)};b.parts.push(p);G.assignPins(b,p);return p;};
+const water=mk("magnet","Water Sensor"), btn=mk("button","Generator On Button"), strip=mk("strip","Green Strip"), ready=mk("flag","Generator Ready"), fuel=mk("flag","Fuel Low");
+b.rules.push({id:"r1",name:"Fuel Full",once:true,when:[{id:"c1",part:water.id,cond:"active"}],then:[{id:"a1",part:fuel.id,action:"fclear"}]});
+b.rules.push({id:"r2",name:"Fuel Low",when:[{id:"c2",part:fuel.id,cond:"isset"},{id:"c3",part:btn.id,cond:"press",join:"and"}],then:[{id:"a2",part:ready.id,action:"fclear"},{id:"w",part:"__sys",action:"wait",value:2},{id:"a3",part:strip.id,action:"off"}]});
+const P={id:"show",mode:"show",name:"T",timer:60,wifi:{ssid:"W",pass:"p",server:"10.0.0.2",port:1883},boards:[b],scenes:[]};
+const show=G.compileShow(P); console.log(JSON.stringify(show.boards[0].rules,null,1));
+const code=G.generate(b,P); fs.writeFileSync("/tmp/rules-gen.ino",code);
+console.log(code.split("\n").filter(l=>/ruleFired/.test(l)).join("\n"));

@@ -953,6 +953,20 @@ function validRuleParts(project, r) {
   return { conds, acts };
 }
 
+// A board's rules, in words, for Escape Runner's website: what each one waits for and what it does.
+// n matches the rule's number in the board's code (and its "Rule n fired" messages).
+function ruleSummaries(b) {
+  const sysText = a => a.action === 'wait' ? 'wait ' + waitText(msOf(a.value), num(a.value2, 0) > num(a.value, 0) ? msOf(a.value2) : 0)
+    : a.action === 'reset' ? 'reset the puzzle' : a.action === 'tell' ? 'tell the show "' + (a.value || '') + '"' : 'print "' + (a.value || '') + '"';
+  return b.rules.map((r, i) => {
+    const { conds, acts } = validRuleParts(b, r);
+    if (!conds.length || !acts.some(x => !(x.part.type === '__sys' && x.a.action === 'wait'))) return null;
+    const joinOf = c => c.join || (r.match === 'any' ? 'or' : 'and');
+    const when = r.match === 'order' ? conds.map(x => condText(b, x.c)).join(', then ')
+      : conds.map((x, k) => (k ? ' ' + joinOf(x.c) + ' ' : '') + condText(b, x.c)).join('');
+    return { n: i + 1, name: String(r.name || ''), when, then: acts.map(({ a, part }) => part.type === '__sys' ? sysText(a) : part.name + ': ' + actLabel(part, a)), once: !!r.once };
+  }).filter(Boolean);
+}
 // For a board in a show: the scene conditions it watches, and the scene steps it carries out
 // ── Device dashboard (every show): parts that report their state to Escape Runner and take manual commands ──
 // onoff/lock/level/strip/angle report a state and can be controlled; press/hold are inputs that can be simulated;
@@ -1215,6 +1229,16 @@ function generate(project, show) {
       add('  Serial.println(ev);');
       add('}');
       add();
+      if (project.rules.length) {
+        add('// Tell Escape Runner a rule fired, so its website can show what this board is doing');
+        add('void ruleFired(byte n) {');
+        add('  if (!mqtt.connected()) return;');
+        add('  char t[4];');
+        add('  snprintf(t, sizeof t, "%u", n);');
+        add('  mqtt.publish(' + cstr('eb/' + SH.slug + '/rule') + ', t);');
+        add('}');
+        add();
+      }
     }
     add('void sendMessage(const char *topic, const char *message) {');
     add('  if (mqtt.connected()) mqtt.publish(topic, message);');
@@ -2134,6 +2158,7 @@ function generate(project, show) {
     if (x.once) add('    rule' + n + 'Done = true;');
     const said = 'Rule ' + n + (oneLine(x.r.name) ? ' (' + oneLine(x.r.name) + ')' : '');   // how the log names this rule
     logLine(add, '    ', said + ' fired');
+    if (SH) add('    ruleFired(' + n + ');');
     const emit = stage => { for (const { a, part } of stage.acts) emitAction(add, N, a, part); };
     const scheduleNext = k => {
       const nx = x.stages[k];
@@ -2628,7 +2653,7 @@ function compileShow(P) {
     scenes.push({ id: s.id, name: s.name || 'Untitled scene', once: !!s.once, repeat: !!s.loop, ambient: !!s.ambient, when, steps });
   }
   return { format: 'escape-runner-show', version: 2, name: P.name || 'Untitled show', timerMinutes: Math.max(1, num(P.timer, 60)),
-    boards: P.boards.map(b => ({ id: b.id, slug: slug(b.name), name: b.name })), homekit: (P.homekit || []).map(x => ({ id: x.id, name: x.name || 'Switch', resetOn: !!x.resetOn })),
+    boards: P.boards.map(b => ({ id: b.id, slug: slug(b.name), name: b.name, rules: ruleSummaries(b) })), homekit: (P.homekit || []).map(x => ({ id: x.id, name: x.name || 'Switch', resetOn: !!x.resetOn })),
     speakers: (P.speakers || []).map(x => ({ id: x.id, name: x.name || x.id })),
     phones: phonesOf(P).map(x => ({ id: x.id, name: x.name || 'Phone', address: String(x.address || '').trim(), port: Math.round(num(x.port, 5060)) || 5060 })),
     devices: P.boards.flatMap(b => devicesOf(b).map(d => ({ board: slug(b.name), key: d.key, name: d.p.name, kind: d.kind,
