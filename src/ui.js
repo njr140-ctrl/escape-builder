@@ -910,7 +910,7 @@ function renderRule(project, r, i, numLabel) {
       (match === 'some' && r.when.length > 1 ? pair('<span class="unit">at least</span><input class="field num" type="number" min="1" max="' + r.when.length + '" step="1" id="r-' + r.id + '-need" data-k="rule-need" data-rid="' + r.id + '" value="' + needOf(r, r.when.length) + '" aria-label="How many must be true"><span class="unit">of ' + r.when.length + '</span>') : '') +
       '</div><div class="rows">' + conds + '</div>' +
       (match === 'order' && r.when.length > 1 ? '<p class="hint" style="margin:0">Each step counts the moment it happens. A wrong input starts the sequence over.</p>' + startOver : '') +
-      (match !== 'order' && r.when.slice(1).some(c => c.join === 'or') && r.when.slice(1).some(c => c.join !== 'or') ? '<p class="hint" style="margin:0">“and” is checked before “or”, so A and B or C means (A and B) or C.</p>' : '') +
+      (match === 'all' && r.when.slice(1).some(c => c.join === 'or') && r.when.slice(1).some(c => c.join !== 'or') ? '<p class="hint" style="margin:0">“and” is checked before “or”, so A and B or C means (A and B) or C.</p>' : '') +
     '<button class="add-link" data-act="add-cond" data-rid="' + r.id + '">' + icon('plus', 2.2) + 'Add condition</button></div>' +
     '<div class="clause"><div class="clause-label"><span class="kw then">Then</span></div><div class="rows">' + acts + '</div>' +
     '<div class="add-row"><button class="add-link" data-act="add-act" data-rid="' + r.id + '">' + icon('plus', 2.2) + 'Add action</button>' +
