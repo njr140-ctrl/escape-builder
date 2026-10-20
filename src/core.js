@@ -478,6 +478,8 @@ function validRuleParts(project, r) {
   return { conds, acts };
 }
 
+// "At least N of these are true": how many, kept between 1 and the number of conditions
+const needOf = (r, count) => Math.max(1, Math.min(count, Math.round(num(r.need, 2))));
 // A board's rules, in words, for Escape Runner's website: what each one waits for and what it does.
 // n matches the rule's number in the board's code (and its "Rule n fired" messages).
 function ruleSummaries(b) {
@@ -488,6 +490,7 @@ function ruleSummaries(b) {
     if (!conds.length || !acts.some(x => !(x.part.type === '__sys' && x.a.action === 'wait'))) return null;
     const joinOf = c => c.join || (r.match === 'any' ? 'or' : 'and');
     const when = r.match === 'order' ? conds.map(x => condText(b, x.c)).join(', then ')
+      : r.match === 'some' ? 'at least ' + needOf(r, conds.length) + ' of: ' + conds.map(x => condText(b, x.c)).join(', ')
       : conds.map((x, k) => (k ? ' ' + joinOf(x.c) + ' ' : '') + condText(b, x.c)).join('');
     return { n: i + 1, name: String(r.name || ''), when, then: acts.map(({ a, part }) => part.type === '__sys' ? sysText(a) : part.name + ': ' + actLabel(part, a)), once: !!r.once };
   }).filter(Boolean);
@@ -1692,8 +1695,15 @@ function generate(project, show) {
       const groups = [];
       x.conds.forEach((cp, k) => { if (!k || joinOf(cp.c) === 'or') groups.push([]); groups[groups.length - 1].push(cp); });
       const wrap = (list, sep, many) => many && list.length > 1 ? '(' + list.join(sep) + ')' : list.join(sep);
-      add('  // When ' + groups.map(g => wrap(g.map(({ c }) => oneLine(condText(project, c))), ' AND ', groups.length > 1)).join(' OR '));
-      add('  bool rule' + n + ' = ' + groups.map(g => wrap(g.map(({ c, part }) => condExpr(ctx, c, part)), ' && ', groups.length > 1)).join(' || ') + ';');
+      if (x.r.match === 'some') {   // at least N of these: count how many are true right now
+        const need = needOf(x.r, x.conds.length);
+        add('  // When at least ' + need + ' of these are true: ' + x.conds.map(({ c }) => oneLine(condText(project, c))).join(', '));
+        add('  byte rule' + n + 'Count = ' + x.conds.map(({ c, part }) => '(' + condExpr(ctx, c, part) + ')').join(' + ') + ';');
+        add('  bool rule' + n + ' = rule' + n + 'Count >= ' + need + ';');
+      } else {
+        add('  // When ' + groups.map(g => wrap(g.map(({ c }) => oneLine(condText(project, c))), ' AND ', groups.length > 1)).join(' OR '));
+        add('  bool rule' + n + ' = ' + groups.map(g => wrap(g.map(({ c, part }) => condExpr(ctx, c, part)), ' && ', groups.length > 1)).join(' || ') + ';');
+      }
     }
     let fire = 'rule' + n + ' && !rule' + n + 'Was';
     if (x.repeat || x.loop) {

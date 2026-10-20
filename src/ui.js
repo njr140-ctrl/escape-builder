@@ -235,7 +235,7 @@ function importFile(file) {
       const p = data && data.project ? data.project : data;
       if (data && data.format === 'escape-runner-show') { toast('That\u2019s a show file for Escape Runner. Open the show\u2019s Escape Builder project file instead.'); return; }
       const cleanRules = list => (list || []).filter(r => r && Array.isArray(r.when) && Array.isArray(r.then)).map(r => ({ id: String(r.id || uid()), name: String(r.name || ''), once: !!r.once, loop: !!r.loop, ambient: !!r.ambient,
-        match: ['any', 'order'].includes(r.match) ? r.match : 'all', repeat: num(r.repeat, 0) || '', timeout: num(r.timeout, 0) || '', when: r.when, then: r.then }));
+        match: ['any', 'order', 'some'].includes(r.match) ? r.match : 'all', need: num(r.need, 2), repeat: num(r.repeat, 0) || '', timeout: num(r.timeout, 0) || '', when: r.when, then: r.then }));
       const cleanSketch = (x, fallback) => {
         if (!x || !Array.isArray(x.parts) || !Array.isArray(x.rules)) throw new Error('shape');
         return { id: String(x.id || uid()), name: String(x.name || fallback), board: BOARDS[x.board] ? x.board : 'esp32',
@@ -850,12 +850,13 @@ function actInputs(r, j, a) {
 }
 function renderRule(project, r, i, numLabel) {
   const no = numLabel || ((project.isScenes ? 'SCENE ' : 'RULE ') + (i + 1));
-  const match = r.match === 'order' ? 'order' : 'all';
+  const match = r.match === 'order' ? 'order' : r.match === 'some' && !project.isScenes ? 'some' : 'all';
   const conds = r.when.map((c, j) => {
     const part = project.parts.find(p => p.id === c.part);
     const t = part ? TYPES[part.type] : null;
     const base = 'data-rid="' + r.id + '" data-j="' + j + '"';
     const pre = match === 'order' ? '<span class="and step">' + (j + 1) + '</span>'
+      : match === 'some' ? '<span class="and">\u2022</span>'
       : j ? '<select class="field join' + (c.join === 'or' ? ' or' : '') + '" id="c-' + r.id + '-' + j + '-j" data-k="cond-join" ' + base + ' aria-label="And or or"><option value="and"' + (c.join !== 'or' ? ' selected' : '') + '>and</option><option value="or"' + (c.join === 'or' ? ' selected' : '') + '>or</option></select>'
       : '<span class="and"></span>';
     const ev = isEvPart(c.part), btn = isBtnPart(c.part), hk = isHkPart(c.part), start = isStartPart(c.part);
@@ -905,7 +906,8 @@ function renderRule(project, r, i, numLabel) {
     '<button class="icon-btn" data-act="del-rule" data-rid="' + r.id + '" aria-label="Delete rule" title="Delete rule">' + icon('x', 2) + '</button></div>' +
     '<div class="clause"><div class="clause-label"><span class="kw when">When</span>' + (project.isScenes && !r.when.length ? '<span>only when the game master runs it</span>' : '') +
       (r.when.length > 1 && !project.isScenes ? '<select class="field match" id="r-' + r.id + '-match" data-k="rule-match" data-rid="' + r.id + '" aria-label="How conditions combine">' +
-        [['all', 'these are true'], ['order', 'these happen in this exact order']].map(([k, l]) => '<option value="' + k + '"' + (k === match ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' : '') +
+        [['all', 'these are true'], ['some', 'enough of these are true'], ['order', 'these happen in this exact order']].map(([k, l]) => '<option value="' + k + '"' + (k === match ? ' selected' : '') + '>' + l + '</option>').join('') + '</select>' : '') +
+      (match === 'some' && r.when.length > 1 ? pair('<span class="unit">at least</span><input class="field num" type="number" min="1" max="' + r.when.length + '" step="1" id="r-' + r.id + '-need" data-k="rule-need" data-rid="' + r.id + '" value="' + needOf(r, r.when.length) + '" aria-label="How many must be true"><span class="unit">of ' + r.when.length + '</span>') : '') +
       '</div><div class="rows">' + conds + '</div>' +
       (match === 'order' && r.when.length > 1 ? '<p class="hint" style="margin:0">Each step counts the moment it happens. A wrong input starts the sequence over.</p>' + startOver : '') +
       (match !== 'order' && r.when.slice(1).some(c => c.join === 'or') && r.when.slice(1).some(c => c.join !== 'or') ? '<p class="hint" style="margin:0">“and” is checked before “or”, so A and B or C means (A and B) or C.</p>' : '') +
@@ -1575,7 +1577,8 @@ document.addEventListener('change', e => {
   else if (k === 'rule-ambient') rule().ambient = el.checked;
   else if (k === 'cond-holdon') { const c = rule().when[+el.dataset.j]; c.holdOn = el.checked; c.hold = el.checked ? (num(c.hold, 0) > 0 ? c.hold : 1) : ''; }
   else if (k === 'hk-reset') { const sw = (proj().homekit || []).find(x => x.id === el.dataset.hid); if (sw) sw.resetOn = el.checked; }
-  else if (k === 'rule-match') rule().match = el.value;
+  else if (k === 'rule-match') { const r = rule(); r.match = el.value; if (r.match === 'some' && r.need == null) r.need = Math.max(1, r.when.length - 1); }
+  else if (k === 'rule-need') rule().need = Math.round(num(el.value, 2));
   else if (k === 'cond-join') rule().when[+el.dataset.j].join = el.value;
   else if (k === 'cond-part') {
     const old = rule().when[+el.dataset.j], keep = { id: old.id || uid(), join: old.join };
