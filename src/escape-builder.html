@@ -1893,7 +1893,8 @@ function generate(project, show) {
         add('byte rule' + x.n + 'Pos = 0;   // steps done so far');
         if (x.timeout) add('unsigned long rule' + x.n + 'LastStep = 0;');
       }
-      add('bool rule' + x.n + 'Was = true;');
+      // "Only while true" follows the conditions as they are now, so after power-up or a reset it fires straight away if already true
+      add('bool rule' + x.n + 'Was = ' + (x.whileTrue ? 'false;   // only while true: check it straight away' : 'true;'));
       if (x.whileTrue) add('bool rule' + x.n + 'On = false;     // "only while true": it has fired and not been undone yet');
       if (x.once) add('bool rule' + x.n + 'Done = false;   // "only once" rule');
       if (x.repeat || x.loop) add('unsigned long rule' + x.n + 'AgainAt = 0;   // ' + (x.loop ? 'start over while still true' : 'next repeat while still true'));
@@ -1939,7 +1940,7 @@ function generate(project, show) {
   for (const p of counters) add('  ' + N[p.id].v + ' = 0;');
   for (const p of flags) add('  ' + N[p.id].v + ' = false;');
   for (const x of live) {
-    add('  rule' + x.n + 'Was = true;');
+    add('  rule' + x.n + 'Was = ' + (x.whileTrue ? 'false;   // only while true: fire again at once if still true' : 'true;'));
     if (x.whileTrue) add('  rule' + x.n + 'On = false;');
     if (x.once) add('  rule' + x.n + 'Done = false;');
     if (x.repeat || x.loop) add('  rule' + x.n + 'AgainAt = 0;');
