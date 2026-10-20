@@ -715,7 +715,28 @@ function generate(project, show) {
     add();
     add('// Keeps the message connection up without ever pausing the puzzle');
     add('void keepConnected() {');
-    add('  if (WiFi.status() != WL_CONNECTED) return;   // Wi-Fi reconnects by itself');
+    add('  static bool onWifi = false;');
+    add('  if (WiFi.status() != WL_CONNECTED) {');
+    add('    // Not on Wi-Fi: start a fresh attempt every 15 s. The ESP32 only reconnects by itself after a');
+    add('    // connection it already had, so a failed first try at power-on would otherwise never be retried.');
+    add('    static unsigned long wifiRetryAt = 15000;');
+    add('    if ((long)(millis() - wifiRetryAt) >= 0) {');
+    add('      wifiRetryAt = millis() + 15000;');
+    add('      Serial.println("Wi-Fi not connected yet, trying again");');
+    add('      WiFi.disconnect();');
+    add('      WiFi.begin(WIFI_NAME, WIFI_PASSWORD);');
+    add('    }');
+    add('    onWifi = false;');
+    add('    return;');
+    add('  }');
+    add('  if (!onWifi) {   // just joined (or rejoined) the Wi-Fi');
+    add('    onWifi = true;');
+    add('    Serial.print("On Wi-Fi as ");');
+    add('    Serial.print(WiFi.localIP());');
+    add('    Serial.print(", signal ");');
+    add('    Serial.print(WiFi.RSSI());');
+    add('    Serial.println(" dBm (above -70 is good)");');
+    add('  }');
     add('  static bool uploadsReady = false;');
     add('  if (!uploadsReady) {   // once on Wi-Fi, the Arduino IDE can upload new code to this board over the network');
     add('    ArduinoOTA.begin();');
@@ -1511,6 +1532,8 @@ function generate(project, show) {
   if (usesRandom && !esp) add('  randomSeed(analogRead(A0) * 31 + analogRead(A1) + micros());   // different random waits and flickers every game');
   if (wifi) {
     add('  WiFi.mode(WIFI_STA);');
+    add('  WiFi.persistent(false);   // don\'t wear out flash saving Wi-Fi settings on every start');
+    add('  WiFi.setSleep(false);     // stay fully awake on Wi-Fi: steadier connection, quicker replies');
     add('  WiFi.setAutoReconnect(true);');
     add('  WiFi.begin(WIFI_NAME, WIFI_PASSWORD);   // connects in the background');
     add('  ArduinoOTA.setHostname(MQTT_ID);         // its name under Tools > Port > Network ports');

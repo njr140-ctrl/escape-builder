@@ -39,7 +39,8 @@ struct TM1637Display { TM1637Display(uint8_t, uint8_t); void setBrightness(uint8
 struct AccelStepper { enum { DRIVER = 1, FULL4WIRE = 4 }; AccelStepper(uint8_t, uint8_t = 2, uint8_t = 3, uint8_t = 4, uint8_t = 5, bool = true); void setMaxSpeed(float); void setAcceleration(float); void move(long); void moveTo(long); long currentPosition(); bool run(); void stop(); bool isRunning(); void enableOutputs(); void disableOutputs(); };
 #define WL_CONNECTED 3
 #define WIFI_STA 1
-struct WiFiClass { void mode(int); void setAutoReconnect(bool); void begin(const char*, const char*); int status(); } WiFi;
+struct IPAddressMock {}; SerialT& operator<<(SerialT&, int);
+struct WiFiClass { void mode(int); void setAutoReconnect(bool); void begin(const char*, const char*); int status(); void persistent(bool); void setSleep(bool); void disconnect(); const char* localIP(); int RSSI(); } WiFi;
 struct WiFiClient {};
 struct PubSubClient { PubSubClient(WiFiClient&); void setServer(const char*, int); void setCallback(void (*)(char*, byte*, unsigned int)); bool connected(); bool loop(); bool connect(const char*); bool connect(const char*, const char*, uint8_t, bool, const char*); bool subscribe(const char*); bool publish(const char*, const char*); bool publish(const char*, const char*, bool); bool setBufferSize(uint16_t); };
 
