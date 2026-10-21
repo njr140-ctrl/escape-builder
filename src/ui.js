@@ -1113,8 +1113,8 @@ function boardDiagram(project) {
   const L = place(H.left), R = place(H.right);
   const bottom = Math.max(L.length ? L[L.length - 1].y : 0, R.length ? R[R.length - 1].y : 0) + 22;
   const onHeader = new Set(H.left.concat(H.right));
-  // MP3 player wires name the pin they go to on the player: "Cabinet MP3 · its RX pin"
-  const textOf = a => a.part ? a.part.name + (fieldsOf(a.part).length > 1 && a.role ? ' · ' + (roleInfo(a.part, a.role) ? 'its ' + roleInfo(a.part, a.role).pin + ' pin' : roleText(a.part, a.role, true)) : '') : a.users.map(u => u.name).join(', ') + ' · ' + a.role;
+  // MP3 player wires name the pin they go to on the player: "Cabinet MP3 · MP3 RX"
+  const textOf = a => a.part ? a.part.name + (fieldsOf(a.part).length > 1 && a.role ? ' · ' + (roleInfo(a.part, a.role) ? 'MP3 ' + roleInfo(a.part, a.role).pin : roleText(a.part, a.role, true)) : '') : a.users.map(u => u.name).join(', ') + ' · ' + a.role;
   const colorOf = a => a.part ? WIRE[TYPES[a.part.type].kind] : WIRE.bus;
   const trunc = s => s.length > 30 ? s.slice(0, 29) + '…' : s;
   let s = '<svg viewBox="0 0 ' + W + ' ' + (bottom + 16) + '" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, ui-monospace, monospace" role="img" aria-label="Pin diagram for ' + esc(BOARDS[board].label) + '">';
@@ -1157,6 +1157,38 @@ function boardDiagram(project) {
     '<div class="legend"><span style="--w:' + WIRE.in + '">Input</span><span style="--w:' + WIRE.out + '">Output</span><span style="--w:' + WIRE.bus + '">Shared bus</span></div>';
 }
 
+// A DFPlayer Mini as it looks from above, with the pins to connect coloured and labelled with where they go
+function dfPlayerDiagram(project, part) {
+  const lab = f => { const x = findPin(project.board, part[f]); return x ? x.label + (x.alias ? ' (' + x.alias + ')' : '') : '?'; };
+  const esp = BOARDS[project.board].family === 'esp32';
+  const C = { power: '#F07A6A', ground: '#9AA5A0', data: '#E6B450', speaker: '#86AAEA' };
+  // Left column top to bottom, then right column top to bottom (pin 16 BUSY down to pin 9 IO1)
+  const left = [['VCC', '5V' + (esp ? ' (VIN)' : ''), 'power'], ['RX', lab('pin') + ' via 1 k\u03a9', 'data'], ['TX', lab('pin2'), 'data'], ['DAC_R'], ['DAC_L'],
+    ['SPK_1', 'speaker', 'speaker'], ['GND', 'GND', 'ground'], ['SPK_2', 'speaker', 'speaker']];
+  const right = [['BUSY'], ['USB-'], ['USB+'], ['ADKEY2'], ['ADKEY1'], ['IO2'], ['GND'], ['IO1']];
+  const W = 580, bx1 = 210, bx2 = 400, top = 92, row = 22, H = top + row * 8 + 14;
+  let s = '<svg class="df-diagram" viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" font-family="IBM Plex Mono, ui-monospace, monospace" role="img" aria-label="DFPlayer Mini pins">';
+  s += '<rect x="' + bx1 + '" y="12" width="' + (bx2 - bx1) + '" height="' + (H - 18) + '" rx="8" fill="#13201B" stroke="#2C3D35"/>';
+  s += '<rect x="' + (bx1 + 30) + '" y="20" width="' + (bx2 - bx1 - 60) + '" height="30" rx="4" fill="#1E2A25" stroke="#3A4D44"/>';
+  s += '<text x="' + ((bx1 + bx2) / 2) + '" y="39" text-anchor="middle" font-size="10" fill="#8FA59B">microSD card</text>';
+  s += '<text x="' + ((bx1 + bx2) / 2) + '" y="70" text-anchor="middle" font-size="11" font-weight="600" fill="#B5C5BD">DFPlayer Mini</text>';
+  left.forEach(([name, to, kind], i) => {
+    const y = top + i * row, on = !!to, c = on ? C[kind] : '#3A4D44';
+    s += '<circle cx="' + bx1 + '" cy="' + y + '" r="5" fill="' + c + '"/>';
+    s += '<text x="' + (bx1 + 12) + '" y="' + (y + 4) + '" font-size="11" fill="' + (on ? '#E4EDE8' : '#5F7268') + '">' + name + '</text>';
+    if (on) {
+      s += '<line x1="' + (bx1 - 6) + '" y1="' + y + '" x2="' + (bx1 - 34) + '" y2="' + y + '" stroke="' + c + '" stroke-width="2.5"/>';
+      s += '<text x="' + (bx1 - 40) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" fill="' + c + '">' + esc(to) + '</text>';
+    }
+  });
+  right.forEach(([name], i) => {
+    const y = top + i * row;
+    s += '<circle cx="' + bx2 + '" cy="' + y + '" r="5" fill="#3A4D44"/>';
+    s += '<text x="' + (bx2 - 12) + '" y="' + (y + 4) + '" text-anchor="end" font-size="11" fill="#5F7268">' + name + '</text>';
+  });
+  s += '<text x="' + (bx2 + 14) + '" y="' + (top + 5 * row + 4) + '" font-size="10.5" fill="#8FA59B">IO2: touch to GND to test</text>';
+  return s + '</svg>';
+}
 function renderWiring() {
   const p = cur();
   const esp = BOARDS[p.board].family === 'esp32';
@@ -1167,6 +1199,7 @@ function renderWiring() {
     (hw.length ? boardDiagram(p) + hw.map(x => {
       const { steps, tips } = wiringFor(p, x);
       return '<div class="wire-card ' + TYPES[x.type].kind + '"><h3>' + esc(x.name) + ' <code>' + esc(pinLabel(p, x)) + '</code><span>' + (x.type === 'dimmer' && optsOf(x).motor ? 'DC motor' : TYPES[x.type].label) + '</span></h3>' +
+        (x.type === 'dfplayer' ? dfPlayerDiagram(p, x) : '') +
         '<ul>' + steps.map(st => '<li>' + esc(st) + '</li>').join('') + '</ul>' +
         tips.map(t => '<div class="tip">' + esc(t) + '</div>').join('') + '</div>';
     }).join('') : '<p class="intro">Add parts to see how to wire them.</p>');
