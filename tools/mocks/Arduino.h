@@ -41,7 +41,7 @@ struct AccelStepper { enum { DRIVER = 1, FULL4WIRE = 4 }; AccelStepper(uint8_t, 
 #define WIFI_STA 1
 struct IPAddressMock {}; SerialT& operator<<(SerialT&, int);
 struct WiFiClass { void mode(int); void setAutoReconnect(bool); void begin(const char*, const char*); int status(); void persistent(bool); void setSleep(bool); void disconnect(); const char* localIP(); int RSSI(); } WiFi;
-struct WiFiClient {};
+struct WiFiClient { int connect(const char*, int, int); };
 struct PubSubClient { PubSubClient(WiFiClient&); void setServer(const char*, int); void setCallback(void (*)(char*, byte*, unsigned int)); bool connected(); bool loop(); bool connect(const char*); bool connect(const char*, const char*, uint8_t, bool, const char*); bool subscribe(const char*); bool publish(const char*, const char*); bool publish(const char*, const char*, bool); bool setBufferSize(uint16_t); };
 
 struct ArduinoOTAClass { void setHostname(const char*); void setPassword(const char*); void onStart(void (*)()); void begin(); void handle(); } ArduinoOTA;

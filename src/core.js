@@ -754,9 +754,18 @@ function generate(project, show) {
     add('    return;');
     add('  }');
     add('  if ((long)(millis() - mqttRetryAt) < 0) return;');
-    add('  mqttRetryAt = millis() + 5000;   // try again every 5 seconds');
+    add('  // Never freeze the puzzle while the message server is away: knock first, and only connect if it');
+    add('  // answers within a quarter of a second. Try every 5 s, then every 15 s once it has been gone a while.');
+    add('  static byte mqttFails = 0;');
+    add('  mqttRetryAt = millis() + (mqttFails < 3 ? 5000 : 15000);');
+    add('  if (!wifiClient.connect(MQTT_SERVER, MQTT_PORT, 250)) {');
+    add('    if (mqttFails < 255) mqttFails++;');
+    add('    Serial.println(mqttFails < 3 ? "Message server not reachable, retrying in 5 s" : "Message server still not reachable, retrying every 15 s");');
+    add('    return;');
+    add('  }');
     if (SH) {
       add('  if (mqtt.connect(MQTT_ID, STATUS_TOPIC, 0, true, "offline")) {   // the runner sees "offline" if this board drops');
+      add('    mqttFails = 0;');
       add('    Serial.println("Connected to Escape Runner");');
       add('    mqtt.publish(STATUS_TOPIC, "online", true);');
       add('    mqtt.subscribe(CMD_TOPIC);');
@@ -764,11 +773,13 @@ function generate(project, show) {
       if (SH.devices.some(d => devHasState(d.kind))) add('    devFresh = true;');
     } else {
       add('  if (mqtt.connect(MQTT_ID)) {');
+      add('    mqttFails = 0;');
       add('    Serial.println("Connected to the message server");');
     }
     for (const t of topics) add('    mqtt.subscribe(' + cstr(t) + ');');
     add('  } else {');
-    add('    Serial.println("Message server not reachable, retrying in 5 s");');
+    add('    if (mqttFails < 255) mqttFails++;');
+    add('    Serial.println("The message server answered but didn\'t accept the connection. Retrying soon.");');
     add('  }');
     add('}');
     add();
