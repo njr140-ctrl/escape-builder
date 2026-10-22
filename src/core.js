@@ -533,10 +533,12 @@ function showCtxOf(P, board) {
 // Lightning from Escape Runner, for a strip, a dimmed light or a plain light: a flash map "start,length start,length ..." in ms.
 // extra: what the flash needs besides timing (a strip's colour, a dimmer's brightness), or null
 function flashMembers(add, extra, onCode, offCode, what) {
-  add('  // Lightning from Escape Runner: flashes timed to a thunder sound, as "start,length start,length ..." in ms.');
-  add('  // ' + what + ' carries on between flashes and comes back after the last one.');
+  add('  // Lightning from Escape Runner: flashes timed to a thunder sound, as "start,length,brightness ..."');
+  add('  // (ms, ms, %; brightness can be left out for full). ' + what + ' carries on between flashes and comes back after the last one.');
   add('  unsigned long fT[60];');
   add('  uint16_t fD[60];');
+  add('  byte fB[60];          // each flash\'s brightness, 0 to 100 %');
+  add('  int fCur = -1;        // the flash showing now (-1: none)');
   add('  byte fN = 0;');
   add('  bool fOn = false;');
   add('  unsigned long fStart = 0;');
@@ -553,22 +555,27 @@ function flashMembers(add, extra, onCode, offCode, what) {
   add('      fD[fN] = strtoul(p, &e, 10);');
   add('      if (e == p) break;');
   add('      p = e;');
+  add('      fB[fN] = 100;');
+  add("      if (*p == ',') { p++; fB[fN] = constrain(strtoul(p, &e, 10), 0, 100); p = e; }");
   add('      fN++;');
   add('    }');
   add('    fStart = millis();');
   if (extra) add('    ' + extra.field + ' = ' + extra.name + ';');
   add('    fOn = false;');
+  add('    fCur = -1;');
   add('  }');
   add('  bool flashUpdate() {');
   add('    unsigned long t = millis() - fStart;');
-  add('    bool on = false, more = false;');
+  add('    bool more = false;');
+  add('    int cur = -1;');
   add('    for (byte k = 0; k < fN; k++) {');
   add('      if (t < fT[k] + fD[k]) more = true;');
-  add('      if (t >= fT[k] && t < fT[k] + fD[k]) on = true;');
+  add('      if (t >= fT[k] && t < fT[k] + fD[k]) cur = k;');
   add('    }');
-  add('    if (on != fOn) {');
-  add('      fOn = on;');
-  add('      if (on) { ' + onCode + ' }');
+  add('    if (cur != fCur) {');
+  add('      fCur = cur;');
+  add('      fOn = cur >= 0;');
+  add('      if (fOn) { byte b = fB[cur]; ' + onCode + ' }');
   add('      else ' + offCode);
   add('    }');
   add('    if (!more) fN = 0;');
@@ -1022,7 +1029,7 @@ function generate(project, show) {
     add('    togglesLeft = times < 1 ? -1 : times * 2 - 1;');
     add('    nextToggle = millis() + onMs;');
     add('  }');
-    if (litOut) flashMembers(add, null, 'digitalWrite(pin, activeLow ? LOW : HIGH);', 'write(on);', 'The light\'s own on/off (and any blink)');
+    if (litOut) flashMembers(add, null, '(void)b; /* on/off only: a Dimmer can vary brightness */ digitalWrite(pin, activeLow ? LOW : HIGH);', 'write(on);', 'The light\'s own on/off (and any blink)');
     add('  void update() {');
     if (litOut) add('    if (fN && flashUpdate() && fOn) return;   // lightning is showing');
     add('    unsigned long now = millis();');
@@ -1139,7 +1146,7 @@ function generate(project, show) {
     add('    return s.color;');
     add('  }');
     if (lit) {
-      flashMembers(add, { type: 'uint32_t', name: 'color', field: 'fColor' }, 'px.fill(fColor); px.show();', 'draw();', 'The strip\'s own look');
+      flashMembers(add, { type: 'uint32_t', name: 'color', field: 'fColor' }, 'px.fill(dim(fColor, b * 255UL / 100)); px.show();', 'draw();', 'The strip\'s own look');
     }
     add('  void draw() {');
     add('    unsigned long t = millis() - start;');
@@ -1280,7 +1287,7 @@ function generate(project, show) {
     add('    startAt = millis();');
     add('    dur = ms ? ms : 1;');
     add('  }');
-    if (litDim) flashMembers(add, { type: 'float', name: 'pct', field: 'fPct' }, 'analogWrite(pin, (int)(fPct * 2.55));', 'write();', 'The light\'s own level (and any fade)');
+    if (litDim) flashMembers(add, { type: 'float', name: 'pct', field: 'fPct' }, 'analogWrite(pin, (int)(fPct * b / 100 * 2.55));', 'write();', 'The light\'s own level (and any fade)');
     add('  void update() {');
     if (litDim) add('    if (fN && flashUpdate() && fOn) return;   // lightning is showing');
     if (flickers) {
@@ -2225,7 +2232,7 @@ function compileShow(P) {
             label: who + ' \u00b7 Play ' + (files.length > 1 ? 'one of ' + files.join(', ') : files[0]) + (extra.length ? ' (' + extra.join(', ') + ')' : '') };
           if (files.length > 1) st.files = files;
           // One flash map per board; each board flashes its ticked lights
-          if (lit.length) st.lightning = [...new Set(lit.map(x => x.b))].map(b => ({ board: slug(b.name), cmd: a.id, label: lit.filter(x => x.b === b).map(x => b.name + ' \u00b7 ' + x.p.name).join(', ') }));
+          if (lit.length) st.lightning = [...new Set(lit.map(x => x.b))].map(b => ({ board: slug(b.name), cmd: a.id, label: lit.filter(x => x.b === b).map(x => b.name + ' \u00b7 ' + x.p.name).join(', '), levels: true }));
           steps.push(st);
         } else if (a.action === 'sndstop') {
           const st = { kind: 'stopSound', output: sp.id, fadeOutMs: fade, label: who + ' \u00b7 Stop ' + (file || 'every sound') + (fade ? ' (fade out ' + fmtSec(a.fade) + ')' : '') };
