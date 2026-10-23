@@ -2254,8 +2254,11 @@ function compileShow(P) {
         if (a.action === 'vidplay') {
           if (!file) continue;
           const loop = !!a.loop, wait = !loop && !!a.wait, vol = pct(a.vol, 100);
-          const extra = [vol < 100 ? vol + '%' : '', loop ? 'loop' : '', wait ? 'wait for it to end' : ''].filter(Boolean);
-          steps.push({ kind: 'video', file, volume: vol, loop, wait, label: 'TV \u00b7 Show ' + file + (extra.length ? ' (' + extra.join(', ') + ')' : '') });
+          const sp = a.spk ? speakersOf(P).find(x => x.id === a.spk) : null;
+          const extra = [sp ? 'sound on ' + (sp.name || sp.id) : '', vol < 100 ? vol + '%' : '', loop ? 'loop' : '', wait ? 'wait for it to end' : ''].filter(Boolean);
+          const st = { kind: 'video', file, volume: vol, loop, wait, label: 'TV \u00b7 Show ' + file + (extra.length ? ' (' + extra.join(', ') + ')' : '') };
+          if (sp) st.output = sp.id;
+          steps.push(st);
         } else steps.push({ kind: 'stopVideo', label: 'TV \u00b7 Stop the video' });
         continue;
       }

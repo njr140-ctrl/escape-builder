@@ -818,9 +818,18 @@ function mediaInputs(r, j, a) {
         '</div>';
     }
   }
-  return file + n('vol', 'volume', '%', 100, 5, 100) + (video ? '' : n('fade', 'fade in', 's', 0, 0.5)) + cb('loop', 'Loop') + cb('wait', 'Wait for it to end', a.loop) + lightSw +
+  // Videos: which speaker the video's sound plays on (the TV's own sound unless one is picked)
+  let spk = '';
+  if (video) {
+    const list = speakersOf(proj()), gone = a.spk && !list.some(x => x.id === a.spk);
+    spk = pair('<span class="unit">sound on</span><select class="field" id="' + id + 'spk" data-k="act-m" data-f="spk" ' + base + ' aria-label="Play the video\u2019s sound on">' +
+      '<option value=""' + (a.spk ? '' : ' selected') + '>TV (HDMI)</option>' +
+      list.map(x => '<option value="' + esc(x.id) + '"' + (a.spk === x.id ? ' selected' : '') + '>' + esc(x.name || x.id) + '</option>').join('') +
+      (gone ? '<option value="' + esc(a.spk) + '" selected>(removed speaker)</option>' : '') + '</select>');
+  }
+  return file + spk + n('vol', 'volume', '%', 100, 5, 100) + (video ? '' : n('fade', 'fade in', 's', 0, 0.5)) + cb('loop', 'Loop') + cb('wait', 'Wait for it to end', a.loop) + lightSw +
     infoBubble(video ? 'Videos' : 'Sounds', video
-      ? '<p>Plays fullscreen on the screen or TV plugged into the HDMI port of the computer running Escape Runner. A new video replaces the one showing; the screen stays black between videos.</p><p>Upload the file in Escape Runner\u2019s <b>Media</b> panel and type its name exactly (capitals count).</p>'
+      ? '<p>Plays fullscreen on the screen or TV plugged into the HDMI port of the computer running Escape Runner. A new video replaces the one showing; the screen stays black between videos.</p><p><b>Sound on</b> picks where the video\u2019s sound plays: the TV, or one of your speakers (handy when the TV has none).</p><p>Upload the file in Escape Runner\u2019s <b>Media</b> panel and type its name exactly (capitals count).</p>'
       : '<p>Plays on the computer running Escape Runner, through this speaker. Several sounds can play at once.</p><p>List several files with commas (<code>thunder1.mp3, thunder2.mp3</code>) to play one at random each time.</p><p><b>Lightning</b> flashes the lights you tick on every crack in the sound, on any boards: LED strips (in the colour you pick), Lights, and Dimmers such as a 12 V strip on a MOSFET (at the brightness you pick). Escape Runner measures each file when you upload it.</p><p>Upload the file in Escape Runner\u2019s <b>Media</b> panel and type its name exactly (capitals count). <b>Wait for it to end</b> holds the scene until the sound finishes.</p>') + picks;
 }
 // A part by id, from this sketch or any board in the show
