@@ -1346,7 +1346,8 @@ function generate(project, show) {
       add('byte ' + v + 'RowPins[4] = {' + [1, 2, 3, 4].map(i => PC(p, i === 1 ? 'pin' : 'pin' + i)).join(', ') + '};');
       add('byte ' + v + 'ColPins[' + cols + '] = {' + Array.from({ length: cols }, (_, i) => PC(p, 'pin' + (5 + i))).join(', ') + '};');
       add('Keypad ' + v + ' = Keypad(makeKeymap(' + v + 'Keys), ' + v + 'RowPins, ' + v + 'ColPins, 4, ' + cols + ');');
-      add('String ' + v + 'Typed = "";    // keys typed so far');
+      add('String ' + v + 'Typed = "";    // the last keys typed');
+      add('byte ' + v + 'Count = 0;       // keys typed since the last code or wrong try');
       add('String ' + v + 'Code = "";     // a code that was just entered');
       add('bool ' + v + 'Wrong = false;   // a wrong code was just entered');
       add('char ' + v + 'Key = 0;         // the key just pressed');
@@ -1476,7 +1477,7 @@ function generate(project, show) {
   for (const p of steppers) add('  ' + N[p.id].v + '.moveTo(' + N[p.id].v + '.currentPosition());   // stop where it is');
   for (const p of screens) add('  showText(' + N[p.id].v + ', ' + cstr(optsOf(p).startText || '') + ');');
   for (const p of dials) add('  ' + N[p.id].v + '.pos = 0;');
-  for (const p of pads) add('  ' + N[p.id].v + 'Typed = "";');
+  for (const p of pads) add('  ' + N[p.id].v + 'Typed = ""; ' + N[p.id].v + 'Count = 0;');
   for (const p of counters) add('  ' + N[p.id].v + ' = 0;');
   for (const p of flags) add('  ' + N[p.id].v + ' = false;');
   for (const x of live) {
@@ -1668,19 +1669,33 @@ function generate(project, show) {
       add('  ' + v + 'Key = ' + v + '.getKey();');
       add('  if (' + v + 'Key) {');
       logVal(add, '    ', p.name + ' key: ', v + 'Key');
-      add('    if (' + v + 'Key == \'*\') ' + v + 'Typed = "";                     // * clears');
-      add('    else {');
-      add('      if (' + v + 'Key != \'#\') ' + v + 'Typed += ' + v + 'Key;           // # submits early');
+      // Listens all the time: it keeps the last few keys pressed and checks whether they end in a code,
+      // so stray keys before the code never get in the way. A code that's the start of a longer one
+      // (a single key with its own sound, say) doesn't wipe the keys, so the longer one still builds up.
+      const byLen = [...list].sort((x, y) => y.length - x.length);
+      add('    if (' + v + 'Key == \'*\') { ' + v + 'Typed = ""; ' + v + 'Count = 0; }   // * clears');
+      add('    else if (' + v + 'Key == \'#\') {                             // # gives up on what was typed');
+      add('      ' + v + 'Wrong = ' + v + 'Count > 0;');
+      add('      if (' + v + 'Wrong) { if (LOG) { logTime(); Serial.print(F(' + cstr(oneLine(p.name) + ': wrong code ') + ')); Serial.println(' + v + 'Typed); } }');
+      add('      ' + v + 'Typed = "";');
+      add('      ' + v + 'Count = 0;');
+      add('    } else {');
+      add('      ' + v + 'Typed += ' + v + 'Key;');
+      add('      ' + v + 'Count++;');
+      add('      if (' + v + 'Typed.length() > ' + maxLen + ') ' + v + 'Typed.remove(0, ' + v + 'Typed.length() - ' + maxLen + ');   // only the last ' + maxLen + ' keys count');
+      byLen.forEach((c, i) => {
+        const longer = list.some(o => o.length > c.length);
+        add('      ' + (i ? 'else ' : '') + 'if (' + v + 'Typed.endsWith(' + cstr(c) + ')) { ' + v + 'Code = ' + cstr(c) + ';' + (longer ? '' : ' ' + v + 'Typed = "";') + ' }');
+      });
       if (list.length) {
-        add('      if (' + list.map(c => v + 'Typed == ' + cstr(c)).join(' || ') + ') {');
-        add('        ' + v + 'Code = ' + v + 'Typed;');
+        add('      if (' + v + 'Code.length()) {');
         logVal(add, '        ', p.name + ': right code ', v + 'Code');
-        add('        ' + v + 'Typed = "";');
-        add('      } else if (' + v + 'Key == \'#\' || ' + v + 'Typed.length() >= ' + maxLen + ') {');
-      } else add('      if (' + v + 'Key == \'#\' || ' + v + 'Typed.length() >= ' + maxLen + ') {');
-      add('        ' + v + 'Wrong = ' + v + 'Typed.length() > 0;');
-      add('        if (' + v + 'Wrong) { if (LOG) { logTime(); Serial.print(F(' + cstr(oneLine(p.name) + ': wrong code ') + ')); Serial.println(' + v + 'Typed); } }');
-      add('        ' + v + 'Typed = "";');
+        add('        ' + v + 'Count = 0;');
+        add('      } else if (' + v + 'Count >= ' + maxLen + ') {');
+      } else add('      if (' + v + 'Count >= ' + maxLen + ') {');
+      add('        ' + v + 'Wrong = true;                           // ' + maxLen + ' keys with no code: counts as a wrong try');
+      add('        if (LOG) { logTime(); Serial.print(F(' + cstr(oneLine(p.name) + ': wrong code ') + ')); Serial.println(' + v + 'Typed); }');
+      add('        ' + v + 'Count = 0;');
       add('      }');
       add('    }');
       add('  }');
@@ -2059,7 +2074,7 @@ function wiringFor(project, p) {
       const fs = fieldsOf(p);
       steps.push('Keypad pins, left to right with the keys facing you: ' + fs.map(([f, role]) => role + ' to ' + L(f)).join(', ') + '.');
       steps.push('No resistors or power needed.');
-      tips.push('Players press * to clear what they typed, and # to submit early. Codes check automatically once enough keys are typed.');
+      tips.push('The keypad is always listening: the code works whatever was pressed before it. * clears what was typed, # counts it as a wrong try.');
       tips.push('If keys come out wrong, the row and column wires are swapped: reverse the order.');
       break;
     }
