@@ -1866,11 +1866,56 @@ function generate(project, show) {
       add('  }');
       add('};');
     }
+    if (players.length) {
+      add('// MP3 player helper: a DFPlayer locks up if a command arrives while it\'s still starting a track,');
+      add('// so commands wait in a short line and go out at least 200 ms apart. A newer play or stop');
+      add('// replaces one still waiting, so quick presses play the latest track instead of piling up.');
+      add('struct Mp3 : DFRobotDFPlayerMini {');
+      add('  byte kind[6];');
+      add('  int val[6];');
+      add('  byte waiting = 0;');
+      add('  unsigned long sentAt = 0;');
+      add('  void queue(byte k, int v) {   // 1 play, 2 stop, 3 volume, 4 loop on, 5 loop off');
+      add('    if (k <= 2) {   // a play or stop replaces any play, stop or loop still waiting');
+      add('      byte j = 0;');
+      add('      for (byte i = 0; i < waiting; i++) if (kind[i] == 3 || kind[i] == 5) { kind[j] = kind[i]; val[j++] = val[i]; }');
+      add('      waiting = j;');
+      add('    }');
+      add('    if (k == 3 || k == 5) {   // a volume or loop off replaces the same one still waiting');
+      add('      byte j = 0;');
+      add('      for (byte i = 0; i < waiting; i++) if (kind[i] != k) { kind[j] = kind[i]; val[j++] = val[i]; }');
+      add('      waiting = j;');
+      add('    }');
+      add('    if (waiting == 6) return;');
+      add('    kind[waiting] = k;');
+      add('    val[waiting++] = v;');
+      add('  }');
+      add('  void playMp3Folder(int track) { queue(1, track); }');
+      add('  void stop() { queue(2, 0); }');
+      add('  void volume(uint8_t v) { queue(3, v); }');
+      add('  void enableLoop() { queue(4, 0); }');
+      add('  void disableLoop() { queue(5, 0); }');
+      add('  void update() {');
+      add('    while (available()) readType();   // read what the player says, so it doesn\'t pile up');
+      add('    if (!waiting || millis() - sentAt < 200) return;');
+      add('    byte k = kind[0];');
+      add('    int v = val[0];');
+      add('    for (byte i = 1; i < waiting; i++) { kind[i - 1] = kind[i]; val[i - 1] = val[i]; }');
+      add('    waiting--;');
+      add('    if (k == 1) DFRobotDFPlayerMini::playMp3Folder(v);');
+      add('    else if (k == 2) DFRobotDFPlayerMini::stop();');
+      add('    else if (k == 3) DFRobotDFPlayerMini::volume(v);');
+      add('    else if (k == 4) DFRobotDFPlayerMini::enableLoop();');
+      add('    else DFRobotDFPlayerMini::disableLoop();');
+      add('    sentAt = millis();');
+      add('  }');
+      add('};');
+    }
     for (const p of servos) add('Servo ' + N[p.id].v + ';' + (glides(p) ? '\nServoGlide ' + N[p.id].v + 'Glide(' + N[p.id].v + ');   // moves it smoothly' : ''));
     players.forEach((p, i) => {
       if (esp) add('HardwareSerial ' + serialOf(p) + '(' + (i === 0 ? 2 : 1) + ');');
       else add('SoftwareSerial ' + serialOf(p) + '(' + PC(p, 'pin2') + ', ' + PC(p, 'pin') + ');');
-      add('DFRobotDFPlayerMini ' + N[p.id].v + ';');
+      add('Mp3 ' + N[p.id].v + ';');
     });
     for (const p of strips) add('Strip ' + N[p.id].v + '(' + Math.max(1, int(optsOf(p).count, 30)) + ', ' + PC(p) + ');   // ' + Math.max(1, int(optsOf(p).count, 30)) + ' LEDs');
     for (const p of dimmers) add('Dimmer ' + N[p.id].v + ';');
@@ -2093,6 +2138,7 @@ function generate(project, show) {
     add('    ' + v + '.begin(' + sv + ', false, false);');
     add('    Serial.println(' + cstr(oneLine(p.name) + ': no answer at start-up. Many MP3 players work anyway. If it stays silent, check: Arduino TX pin to player RX (through 1k), player TX to Arduino RX pin, 5V, GND, and the SD card.') + ');');
     add('  }');
+    add('  ' + v + '.begin(' + sv + ', false, false);   // don\'t wait for the player to answer each command: quick presses stalled the board');
     add('  ' + v + '.volume(' + Math.min(30, Math.max(0, int(optsOf(p).volume, 20))) + ');   // 0 to 30');
   }
   for (const p of strips) add('  ' + N[p.id].v + '.begin(' + Math.min(255, Math.max(1, int(optsOf(p).brightness, 80))) + ');   // brightness 1 to 255');
@@ -2314,7 +2360,7 @@ function generate(project, show) {
     add('  }');
     add();
   }
-  const bg = digOuts.concat(strips, dimmers, clocks, bridges);
+  const bg = digOuts.concat(strips, dimmers, clocks, bridges, players);
   if (steppers.length) {
     add('  // Step the motors; power their coils down when they stop so they don\'t get hot');
     for (const p of steppers) add('  if (!' + N[p.id].v + '.run()) ' + N[p.id].v + '.disableOutputs();');
@@ -2322,7 +2368,7 @@ function generate(project, show) {
   }
   const gliders = servos.filter(glides);
   if (bg.length || gliders.length) {
-    add('  // Keep timed effects (pulses, blinks, fades, strip effects, servo moves) running');
+    add('  // Keep timed effects (pulses, blinks, fades, strip effects, servo moves, MP3 commands) running');
     for (const p of bg) add('  ' + N[p.id].v + '.update();');
     for (const p of gliders) add('  ' + N[p.id].v + 'Glide.update();');
   }
@@ -2384,7 +2430,6 @@ function emitAction(add, N, a, part) {
       else if (act === 'volume') add(I + v + '.volume(' + Math.min(30, Math.max(0, int(a.value, 20))) + ');');
       else if (act === 'loop') {   // tracks are found by name in the mp3 folder; then repeat the one playing
         add(I + v + '.playMp3Folder(' + Math.max(1, int(a.value, 1)) + ');   // mp3/' + String(Math.max(1, int(a.value, 1))).padStart(4, '0') + '.mp3');
-        add(I + 'delay(40);   // give the player a moment between commands');
         add(I + v + '.enableLoop();   // keep repeating it');
       } else {
         if (loopsUsed(part)) add(I + v + '.disableLoop();   // stop repeating anything that was looping');

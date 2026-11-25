@@ -13,7 +13,7 @@ typedef uint8_t byte;
 #define constrain(a,l,h) ((a)<(l)?(l):((a)>(h)?(h):(a)))
 static const uint8_t A0=14,A1=15,A2=16,A3=17,A4=18,A5=19,A6=20,A7=21,A8=62,A9=63,A10=64,A11=65,A12=66,A13=67,A14=68,A15=69;
 void pinMode(int,int); void digitalWrite(int,int); int digitalRead(int); int analogRead(int); void analogWrite(int,int); unsigned long millis(); long random(long,long); void randomSeed(unsigned long); unsigned long micros();
-struct String { String(const char* = ""); explicit String(int); explicit String(long); bool operator==(const String&) const; String& operator=(const char*); String(int, int); String& operator+=(const String&); String& operator+=(char); bool operator==(const char*) const; bool operator!=(const char*) const; bool operator!=(const String&) const; unsigned length() const; void toUpperCase(); bool startsWith(const String&) const; const char* c_str() const; int indexOf(char, int = 0) const; String substring(int) const; String substring(int, int) const; long toInt() const; };
+struct String { String(const char* = ""); explicit String(int); explicit String(long); bool operator==(const String&) const; String& operator=(const char*); String(int, int); String& operator+=(const String&); String& operator+=(char); bool operator==(const char*) const; bool operator!=(const char*) const; bool operator!=(const String&) const; unsigned length() const; void toUpperCase(); bool startsWith(const String&) const; const char* c_str() const; int indexOf(char, int = 0) const; String substring(int) const; String substring(int, int) const; long toInt() const; bool endsWith(const String&) const; void remove(unsigned, unsigned); };
 class __FlashStringHelper;
 #define F(s) (reinterpret_cast<const __FlashStringHelper *>(s))
 struct SerialT { void begin(long); void println(); void println(const char*); void println(const String&); void println(int); void println(char); void println(unsigned long); void println(const __FlashStringHelper*);
@@ -22,7 +22,7 @@ struct Servo { void attach(int); void write(int); int read(); };
 struct Stream {};
 struct HardwareSerial : Stream { HardwareSerial(int); void begin(long,int,int,int); };
 struct SoftwareSerial : Stream { SoftwareSerial(int,int); void begin(long); bool listen(); };
-struct DFRobotDFPlayerMini { bool begin(Stream&, bool=true, bool=true); void volume(int); void play(int); void loop(int); void stop(); void enableLoop(); void disableLoop(); void playMp3Folder(int); };
+struct DFRobotDFPlayerMini { bool begin(Stream&, bool=true, bool=true); void volume(int); void play(int); void loop(int); void stop(); void enableLoop(); void disableLoop(); void playMp3Folder(int); bool available(); uint8_t readType(); private: void disableACK(); public: };
 struct MFRC522 { enum StatusCode : byte { STATUS_OK }; struct Uid { byte size; byte uidByte[10]; } uid; MFRC522(byte, byte); void PCD_Init(); StatusCode PICC_WakeupA(byte*, byte*); bool PICC_ReadCardSerial(); StatusCode PICC_HaltA(); };
 struct SPIClass { void begin(); } SPI;
 #define makeKeymap(x) ((char*)x)
