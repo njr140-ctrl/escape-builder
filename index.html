@@ -719,11 +719,12 @@ const PARAM = {
   number:  { unit: '',      def: 1234, min: 0, max: 9999, step: 'any' },
   word:    { text: true,    def: 'OPEN', max: 4, unit: 'up to 4 letters' },
 };
+const mp3Gap = p => Math.min(3000, Math.max(100, int(optsOf(p).gap, 350)));
 function defaultOpts(type) {
   if (type === 'relay') return { activeLow: false, startOn: false, lowFixed: true };   // HIGH = on by default
   if (type === 'maglock') return { activeLow: false, startLocked: true, lowFixed: true };   // HIGH = locked by default
   if (type === 'servo') return { startAngle: 0 };
-  if (type === 'dfplayer') return { volume: 20 };
+  if (type === 'dfplayer') return { volume: 20, gap: 350, restart: true };
   if (type === 'light' || type === 'buzzer') return { startOn: false };
   if (type === 'strip') return { count: 30, density: 60, brightness: 80 };
   if (type === 'dimmer') return { start: 0 };
@@ -1868,13 +1869,27 @@ function generate(project, show) {
     }
     if (players.length) {
       add('// MP3 player helper: a DFPlayer locks up if a command arrives while it\'s still starting a track,');
-      add('// so commands wait in a short line and go out at least 200 ms apart. A newer play or stop');
-      add('// replaces one still waiting, so quick presses play the latest track instead of piling up.');
+      add('// so commands wait in a short line, spaced out. A newer play or stop replaces one still waiting,');
+      add('// so quick presses play the latest track instead of piling up. It also notices when the player');
+      add('// restarts itself (and sets the volume again), and restarts a player that stops answering.');
       add('struct Mp3 : DFRobotDFPlayerMini {');
+      add('  unsigned int gapAfterPlay = 350;   // ms to leave the player alone after starting a track (set in setup)');
+      add('  bool autoRestart = true;           // restart the player if it stops answering (set in setup)');
+      add('  const __FlashStringHelper *name = nullptr;');
       add('  byte kind[6];');
       add('  int val[6];');
       add('  byte waiting = 0;');
-      add('  unsigned long sentAt = 0;');
+      add('  unsigned long sentAt = 0, gap = 0, lastCheck = 0;');
+      add('  byte vol = 20;');
+      add('  bool playing = false;   // a track is (probably) playing');
+      add('  bool answers = false;   // the player has talked back at least once (needs its TX wire)');
+      add('  byte missed = 0;');
+      add('  void say(const __FlashStringHelper *what) {');
+      add('    if (!LOG) return;');
+      add('    logTime();');
+      add('    if (name) { Serial.print(name); Serial.print(F(": ")); }');
+      add('    Serial.println(what);');
+      add('  }');
       add('  void queue(byte k, int v) {   // 1 play, 2 stop, 3 volume, 4 loop on, 5 loop off');
       add('    if (k <= 2) {   // a play or stop replaces any play, stop or loop still waiting');
       add('      byte j = 0;');
@@ -1891,23 +1906,70 @@ function generate(project, show) {
       add('    val[waiting++] = v;');
       add('  }');
       add('  void playMp3Folder(int track) { queue(1, track); }');
-      add('  void stop() { queue(2, 0); }');
-      add('  void volume(uint8_t v) { queue(3, v); }');
+      add('  void stop() {   // only sent if something is playing or about to');
+      add('    bool need = playing;');
+      add('    for (byte i = 0; i < waiting; i++) if (kind[i] == 1) need = true;');
+      add('    queue(2, 0);');
+      add('    if (!need) waiting--;');
+      add('  }');
+      add('  void volume(uint8_t v) { vol = v; queue(3, v); }');
       add('  void enableLoop() { queue(4, 0); }');
       add('  void disableLoop() { queue(5, 0); }');
+      add('  void listen() {   // read what the player says');
+      add('    while (available()) {');
+      add('      byte type = readType();');
+      add('      int value = read();');
+      add('      answers = true;');
+      add('      missed = 0;');
+      add('      if (type == DFPlayerPlayFinished) playing = false;');
+      add('      else if (type == DFPlayerCardOnline || type == DFPlayerCardInserted) {   // it restarted: it forgot the volume');
+      add('        say(F("player restarted (a power dip?), setting the volume again"));');
+      add('        playing = false;');
+      add('        queue(3, vol);');
+      add('      } else if (type == DFPlayerError && LOG) {');
+      add('        logTime();');
+      add('        if (name) { Serial.print(name); Serial.print(F(": ")); }');
+      add('        Serial.print(F("player error "));');
+      add('        Serial.println(value == 1 ? F("busy (SD card not ready)") : value == 3 || value == 4 ? F("garbled command (check the 1k resistor and wires)") : value == 5 || value == 6 ? F("track not found on the SD card") : F("(other)"));');
+      add('      }');
+      add('    }');
+      add('  }');
       add('  void update() {');
-      add('    while (available()) readType();   // read what the player says, so it doesn\'t pile up');
-      add('    if (!waiting || millis() - sentAt < 200) return;');
-      add('    byte k = kind[0];');
-      add('    int v = val[0];');
-      add('    for (byte i = 1; i < waiting; i++) { kind[i - 1] = kind[i]; val[i - 1] = val[i]; }');
-      add('    waiting--;');
-      add('    if (k == 1) DFRobotDFPlayerMini::playMp3Folder(v);');
-      add('    else if (k == 2) DFRobotDFPlayerMini::stop();');
-      add('    else if (k == 3) DFRobotDFPlayerMini::volume(v);');
-      add('    else if (k == 4) DFRobotDFPlayerMini::enableLoop();');
-      add('    else DFRobotDFPlayerMini::disableLoop();');
-      add('    sentAt = millis();');
+      add('    listen();');
+      add('    if (millis() - sentAt < gap) return;');
+      add('    if (waiting) {');
+      add('      byte k = kind[0];');
+      add('      int v = val[0];');
+      add('      for (byte i = 1; i < waiting; i++) { kind[i - 1] = kind[i]; val[i - 1] = val[i]; }');
+      add('      waiting--;');
+      add('      if (k == 1) DFRobotDFPlayerMini::playMp3Folder(v);');
+      add('      else if (k == 2) DFRobotDFPlayerMini::stop();');
+      add('      else if (k == 3) DFRobotDFPlayerMini::volume(v);');
+      add('      else if (k == 4) DFRobotDFPlayerMini::enableLoop();');
+      add('      else DFRobotDFPlayerMini::disableLoop();');
+      add('      if (k <= 2) playing = k == 1;');
+      add('      sentAt = lastCheck = millis();');
+      add('      gap = k == 1 ? gapAfterPlay : 200;');
+      add('      return;');
+      add('    }');
+      add('    // Every 5 seconds, check the player still answers (only if it ever has)');
+      add('    if (!autoRestart || !answers || millis() - lastCheck < 5000) return;');
+      add('    bool ok = readState() >= 0;   // waits up to 200 ms for an answer');
+      add('    if (!ok) {   // it may have said something else instead');
+      add('      byte type = readType();');
+      add('      ok = type != TimeOut;');
+      add('      if (type == DFPlayerPlayFinished) playing = false;');
+      add('    }');
+      add('    sentAt = lastCheck = millis();');
+      add('    gap = 200;');
+      add('    if (ok) { missed = 0; return; }');
+      add('    if (++missed < 2) return;');
+      add('    say(F("player stopped answering: restarting it"));');
+      add('    DFRobotDFPlayerMini::reset();');
+      add('    missed = 0;');
+      add('    playing = false;');
+      add('    queue(3, vol);   // the volume goes out once it has started again');
+      add('    gap = 2000;');
       add('  }');
       add('};');
     }
@@ -2134,11 +2196,16 @@ function generate(project, show) {
     // Genuine DFPlayers answer at start-up. Many compatible players (FN-M16P, MH2024K, GD3200B ...) don't, but play fine.
     add('  // A genuine DFPlayer answers here. Many compatible players don\'t, but play fine,');
     add('  // so with no answer, carry on without waiting for replies.');
-    add('  if (!' + v + '.begin(' + sv + ', true, true)) {');
+    add('  if (' + v + '.begin(' + sv + ', true, true)) ' + v + '.answers = true;');
+    add('  else {');
     add('    ' + v + '.begin(' + sv + ', false, false);');
     add('    Serial.println(' + cstr(oneLine(p.name) + ': no answer at start-up. Many MP3 players work anyway. If it stays silent, check: Arduino TX pin to player RX (through 1k), player TX to Arduino RX pin, 5V, GND, and the SD card.') + ');');
     add('  }');
     add('  ' + v + '.begin(' + sv + ', false, false);   // don\'t wait for the player to answer each command: quick presses stalled the board');
+    add('  ' + v + '.setTimeOut(200);   // how long a health check waits for an answer');
+    add('  ' + v + '.name = F(' + cstr(oneLine(p.name)) + ');');
+    add('  ' + v + '.gapAfterPlay = ' + mp3Gap(p) + ';   // ms to wait after starting a track before the next command');
+    add('  ' + v + '.autoRestart = ' + (optsOf(p).restart !== false ? 'true;   // restart it if it stops answering' : 'false;   // never restart it'));
     add('  ' + v + '.volume(' + Math.min(30, Math.max(0, int(optsOf(p).volume, 20))) + ');   // 0 to 30');
   }
   for (const p of strips) add('  ' + N[p.id].v + '.begin(' + Math.min(255, Math.max(1, int(optsOf(p).brightness, 80))) + ');   // brightness 1 to 255');
@@ -3283,7 +3350,9 @@ function partOpts(project, p) {
     case 'button': case 'switch': case 'magnet': case 'motion': case 'linkin': return reversed(true);
     case 'relay': return cb('startOn', 'On at start') + cb('activeLow', 'Relay switches on LOW');
     case 'maglock': return cb('startLocked', 'Locked at start') + cb('activeLow', 'Relay switches on LOW');
-    case 'dfplayer': return multi + optNum(p, 'volume', 'Volume', 'of 30', 0, 30);
+    case 'dfplayer': return multi + optNum(p, 'volume', 'Volume', 'of 30', 0, 30) +
+      optNum(p, 'gap', 'Wait after a track starts', 'ms', 100, 3000, 50) +
+      '<label title="Every 5 seconds the board checks the player still answers, and restarts it if not. Needs the player\u2019s TX wire."><input type="checkbox" id="o-' + p.id + '-restart" data-k="opt" data-id="' + p.id + '" data-opt="restart"' + (o.restart !== false ? ' checked' : '') + '>Restart it if it stops answering</label>';
     case 'servo': return motorType(p) + optNum(p, 'startAngle', 'Start angle', '°', 0, 180);
     case 'keypad': return optSel(p, 'layout', 'Layout', [['4x4', '4×4 (with A–D)'], ['4x3', '3×4 (phone style)']]) + multi;
     case 'linkout': return '';

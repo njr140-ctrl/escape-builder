@@ -411,7 +411,9 @@ function partOpts(project, p) {
     case 'button': case 'switch': case 'magnet': case 'motion': case 'linkin': return reversed(true);
     case 'relay': return cb('startOn', 'On at start') + cb('activeLow', 'Relay switches on LOW');
     case 'maglock': return cb('startLocked', 'Locked at start') + cb('activeLow', 'Relay switches on LOW');
-    case 'dfplayer': return multi + optNum(p, 'volume', 'Volume', 'of 30', 0, 30);
+    case 'dfplayer': return multi + optNum(p, 'volume', 'Volume', 'of 30', 0, 30) +
+      optNum(p, 'gap', 'Wait after a track starts', 'ms', 100, 3000, 50) +
+      '<label title="Every 5 seconds the board checks the player still answers, and restarts it if not. Needs the player\u2019s TX wire."><input type="checkbox" id="o-' + p.id + '-restart" data-k="opt" data-id="' + p.id + '" data-opt="restart"' + (o.restart !== false ? ' checked' : '') + '>Restart it if it stops answering</label>';
     case 'servo': return motorType(p) + optNum(p, 'startAngle', 'Start angle', '°', 0, 180);
     case 'keypad': return optSel(p, 'layout', 'Layout', [['4x4', '4×4 (with A–D)'], ['4x3', '3×4 (phone style)']]) + multi;
     case 'linkout': return '';

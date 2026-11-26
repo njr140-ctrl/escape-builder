@@ -22,7 +22,12 @@ struct Servo { void attach(int); void write(int); int read(); };
 struct Stream {};
 struct HardwareSerial : Stream { HardwareSerial(int); void begin(long,int,int,int); };
 struct SoftwareSerial : Stream { SoftwareSerial(int,int); void begin(long); bool listen(); };
-struct DFRobotDFPlayerMini { bool begin(Stream&, bool=true, bool=true); void volume(int); void play(int); void loop(int); void stop(); void enableLoop(); void disableLoop(); void playMp3Folder(int); bool available(); uint8_t readType(); private: void disableACK(); public: };
+#define TimeOut 0
+#define DFPlayerCardInserted 2
+#define DFPlayerCardOnline 4
+#define DFPlayerPlayFinished 5
+#define DFPlayerError 6
+struct DFRobotDFPlayerMini { bool begin(Stream&, bool=true, bool=true); void volume(int); void play(int); void loop(int); void stop(); void enableLoop(); void disableLoop(); void playMp3Folder(int); bool available(); uint8_t readType(); uint16_t read(); int readState(); void reset(); void setTimeOut(unsigned long); private: void disableACK(); public: };
 struct MFRC522 { enum StatusCode : byte { STATUS_OK }; struct Uid { byte size; byte uidByte[10]; } uid; MFRC522(byte, byte); void PCD_Init(); StatusCode PICC_WakeupA(byte*, byte*); bool PICC_ReadCardSerial(); StatusCode PICC_HaltA(); };
 struct SPIClass { void begin(); } SPI;
 #define makeKeymap(x) ((char*)x)
