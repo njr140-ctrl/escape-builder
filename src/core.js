@@ -24,19 +24,43 @@ function esp32Pins() {
   return list.map(n => ({ id: 'G' + n, label: 'GPIO ' + n, code: String(n), analog: adc.includes(n), pwm: n < 34, alias: alias[n] || '',
     inputOnly: n >= 34, note: n >= 34 ? 'Input only, no internal pull-up' : (notes[n] || '') }));
 }
+// KinCony B24M (ESP32-S3): 24 optocoupler inputs and 24 MOSFET outputs on I/O expander chips, plus 7 free ESP32 pins.
+// Pin defines from KinCony's forum (tid=8358) and the ESPHome config. Inputs and outputs aren't ESP32 pins, so the code
+// gives them made-up numbers (inputs 1001-1024, outputs 2001-2024) and reads/writes them through the expanders.
+// "ext" pins work only for simple on/off parts (buttons, switches, sensors, lights, relays, maglocks, buzzers).
+function b24mPins() {
+  const p = [];
+  for (let i = 1; i <= 24; i++) p.push({ id: 'X' + i, label: 'Input ' + i, code: String(1000 + i), ext: 'in', inputOnly: true, analog: false, pwm: false,
+    note: 'Dry contact: closes to GND' });
+  for (let i = 1; i <= 24; i++) p.push({ id: 'Y' + i, label: 'Output ' + i, code: String(2000 + i), ext: 'out', analog: false, pwm: false,
+    note: 'MOSFET: gives out +12/24 V when on' });
+  const pullUp = [47, 48, 7, 40], bare = [13, 14, 21];
+  for (const n of pullUp.concat(bare)) p.push({ id: 'G' + n, label: 'GPIO ' + n, code: String(n), analog: [7, 13, 14].includes(n), pwm: true,
+    note: 'Free pin, 3.3 V only' + (pullUp.includes(n) ? ' (1-Wire terminal)' : '') });
+  // Used by the board itself: the I2C bus (expanders, screen) and nothing else may take them
+  p.push({ id: 'G8', label: 'GPIO 8', code: '8', busOnly: true, note: 'I2C SDA (expanders, screen)' });
+  p.push({ id: 'G18', label: 'GPIO 18', code: '18', busOnly: true, note: 'I2C SCL (expanders, screen)' });
+  return p;
+}
+// The B24M's hardware: expander addresses, which expander pin is which input or output, and the Ethernet chip's pins
+const B24M = { sda: 8, scl: 18, eth: { cs: 42, irq: 43, rst: 44, sck: 1, miso: 41, mosi: 2 } };
 const UNO_PWM = [3, 5, 6, 9, 10, 11];
 const BOARDS = {
   uno:   { label: 'Arduino Uno',       short: 'Uno',   family: 'avr',   adcMax: 1023, pins: avrPins(13, 6, [], UNO_PWM) },
   nano:  { label: 'Arduino Nano',      short: 'Nano',  family: 'avr',   adcMax: 1023, pins: avrPins(13, 8, ['A6', 'A7'], UNO_PWM) },
   mega:  { label: 'Arduino Mega 2560', short: 'Mega',  family: 'avr',   adcMax: 1023, pins: avrPins(53, 16, [], [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 44, 45, 46]) },
   esp32: { label: 'ESP32 DevKit',      short: 'ESP32', family: 'esp32', adcMax: 4095, pins: esp32Pins() },
+  b24m:  { label: 'KinCony B24M',      short: 'B24M',  family: 'esp32', adcMax: 4095, pins: b24mPins(), s3: true, ethernet: true },
 };
+const isB24 = board => board === 'b24m';
 // Shared bus pins, fixed by the board
 const BUSES = {
   spi: { label: 'SPI', uno: [['D13', 'SCK'], ['D12', 'MISO'], ['D11', 'MOSI']], nano: [['D13', 'SCK'], ['D12', 'MISO'], ['D11', 'MOSI']],
-         mega: [['D52', 'SCK'], ['D50', 'MISO'], ['D51', 'MOSI']], esp32: [['G18', 'SCK'], ['G19', 'MISO'], ['G23', 'MOSI']] },
+         mega: [['D52', 'SCK'], ['D50', 'MISO'], ['D51', 'MOSI']], esp32: [['G18', 'SCK'], ['G19', 'MISO'], ['G23', 'MOSI']],
+         b24m: [['G13', 'SCK'], ['G14', 'MISO'], ['G21', 'MOSI']] },   // the Ethernet chip has its own SPI pins, so RFID uses free ones
   i2c: { label: 'I2C', uno: [['A4', 'SDA'], ['A5', 'SCL']], nano: [['A4', 'SDA'], ['A5', 'SCL']],
-         mega: [['D20', 'SDA'], ['D21', 'SCL']], esp32: [['G21', 'SDA'], ['G22', 'SCL']] },
+         mega: [['D20', 'SDA'], ['D21', 'SCL']], esp32: [['G21', 'SDA'], ['G22', 'SCL']],
+         b24m: [['G8', 'SDA'], ['G18', 'SCL']] },   // shared with the board's expanders; screens plug into its I2C header
 };
 // Physical header order, for the pin diagram ('|' = gap between headers)
 const HEADERS = {
@@ -54,7 +78,17 @@ const HEADERS = {
     right: ['SCL', 'SDA', 'AREF', 'GND', 'D13', 'D12', 'D11', 'D10', 'D9', 'D8', '|', 'D7', 'D6', 'D5', 'D4', 'D3', 'D2', 'TX', 'RX', '|',
       'D14', 'D15', 'D16', 'D17', 'D18', 'D19', 'D20', 'D21', '|'].concat(Array.from({ length: 32 }, (_, i) => 'D' + (22 + i))) },
 };
+HEADERS.b24m = { name: 'KinCony B24M',
+  left: Array.from({ length: 24 }, (_, i) => 'X' + (i + 1)).concat(['GND', '|', 'G47', 'G48', 'G7', 'G40', '3V3']),
+  right: Array.from({ length: 24 }, (_, i) => 'Y' + (i + 1)).concat(['DC+', '|', 'G13', 'G14', 'G21', 'GND']) };
 const PREFS = {
+  b24m: {
+    sin: Array.from({ length: 24 }, (_, i) => 'X' + (i + 1)),    // buttons, switches, sensors: the board's inputs first
+    sout: Array.from({ length: 24 }, (_, i) => 'Y' + (i + 1)),   // lights, relays, maglocks, buzzers: its outputs
+    in: ['G47', 'G48', 'G7', 'G40', 'G13', 'G14', 'G21'],
+    out: ['G47', 'G48', 'G40', 'G21', 'G7', 'G13', 'G14'],
+    analog: ['G7', 'G13', 'G14'],
+  },
   esp32: {
     in: [13, 14, 27, 26, 25, 33, 32, 4, 16, 17, 18, 19, 21, 22, 23].map(n => 'G' + n),
     out: [23, 22, 21, 19, 18, 17, 16, 4, 25, 26, 27, 33, 32, 14, 13].map(n => 'G' + n),
@@ -62,7 +96,8 @@ const PREFS = {
   },
 };
 function prefOrder(board, need) {
-  const kind = need === 'rx' ? 'in' : need === 'pwm' ? 'out' : need;
+  if (PREFS[board] && PREFS[board][need]) return PREFS[board][need];
+  const kind = need === 'rx' || need === 'sin' ? 'in' : need === 'pwm' || need === 'sout' ? 'out' : need;
   if (PREFS[board]) return PREFS[board][kind];
   const B = BOARDS[board];
   const d = B.pins.filter(p => !p.analog).map(p => p.id);
@@ -285,11 +320,17 @@ function fieldsOf(p) {
     case 'analog': return [['pin', '', 'analog']];
     case 'strip': return [['pin', 'DIN', 'out']];
     case 'dimmer': return [['pin', '', 'pwm']];
-    default: return [['pin', '', TYPES[p.type].kind === 'in' ? 'in' : 'out']];
+    case 'servo': return [['pin', '', 'out']];
+    // Simple on/off parts ("sin"/"sout"): these can also use the B24M's own inputs and outputs
+    default: return [['pin', '', TYPES[p.type].kind === 'in' ? 'sin' : 'sout']];
   }
 }
 function pinFits(pin, need, board) {
-  if (!pin) return false;
+  if (!pin || pin.busOnly) return false;
+  // B24M inputs/outputs: only simple on/off parts, and only the matching direction
+  if (pin.ext) return (need === 'sin' && pin.ext === 'in') || (need === 'sout' && pin.ext === 'out');
+  if (need === 'sin') need = 'in';
+  if (need === 'sout') need = 'out';
   if (need === 'analog') return !!pin.analog;
   if (need === 'rx') return board === 'mega' ? MEGA_RX.includes(pin.id) : !pin.analogOnly;
   if (need === 'in') return !pin.analogOnly;
@@ -599,7 +640,9 @@ function generate(project, show) {
   const flickers = actsUsed.has('flick');
   const simInputs = !!(SH && SH.devices.some(d => d.kind === 'press' || d.kind === 'hold'));   // dashboard can simulate inputs
   const litType = t => !!(SH && SH.lights.some(L => L.parts.some(p => p.type === t)));   // a scene flashes this kind of light for lightning
-  const B = BOARDS[project.board], esp = B.family === 'esp32';
+  const B = BOARDS[project.board], esp = B.family === 'esp32', b24 = isB24(project.board), eth = !!B.ethernet;
+  // On the B24M, inputs and outputs go through its expander chips: ioRead / ioWrite / ioMode pass ESP32 pins straight through
+  const DR = b24 ? 'ioRead' : 'digitalRead', DW = b24 ? 'ioWrite' : 'digitalWrite', PM = b24 ? 'ioMode' : 'pinMode';
   const N = makeIdents(project.parts);
   const wired = project.parts.filter(p => isWired(project, p));
   const unwired = project.parts.filter(p => !isWired(project, p));
@@ -628,7 +671,10 @@ function generate(project, show) {
 
   add('// ' + title);
   if (SH) add('// One board of the show "' + oneLine(SH.showName) + '". Escape Runner coordinates the scenes.');
-  add('// Board: ' + B.label + (esp ? ' (in Arduino IDE pick "ESP32 Dev Module")' : ''));
+  if (b24) {
+    add('// Board: KinCony B24M. In the Arduino IDE pick "ESP32S3 Dev Module", Flash Size "16MB", PSRAM "OPI PSRAM"');
+    add('// (needs the ESP32 boards package 3.0 or newer). If the Serial Monitor stays blank, set USB CDC On Boot to Enabled.');
+  } else add('// Board: ' + B.label + (esp ? ' (in Arduino IDE pick "ESP32 Dev Module")' : ''));
   add('// Made with Escape Builder. Paste into the Arduino IDE and upload.');
   add('//');
   if (wired.length) {
@@ -655,12 +701,13 @@ function generate(project, show) {
   if (readers.length) inc.push('#include <SPI.h>', '#include <MFRC522.h>              // Library Manager: "MFRC522"');
   if (pads.length) inc.push('#include <Keypad.h>               // Library Manager: "Keypad" by Mark Stanley');
   if (strips.length) inc.push('#include <Adafruit_NeoPixel.h>    // Library Manager: "Adafruit NeoPixel"');
-  if (screens.length) inc.push('#include <Wire.h>');
+  if (screens.length || b24) inc.push('#include <Wire.h>' + (b24 ? '                 // the board\'s input/output chips' : ''));
   if (oleds.length) inc.push('#include <Adafruit_GFX.h>', '#include <Adafruit_SSD1306.h>     // Library Manager: "Adafruit SSD1306"');
   if (steppers.length) inc.push('#include <AccelStepper.h>          // Library Manager: "AccelStepper" by Mike McCauley');
   if (clocks.length) inc.push('#include <TM1637Display.h>         // Library Manager: "TM1637" by Avishay Orpaz');
   if (lcds.length) inc.push('#include <LiquidCrystal_I2C.h>     // Library Manager: "LiquidCrystal I2C" by Frank de Brabander');
-  if (wifi) inc.push('#include <WiFi.h>', '#include <ArduinoOTA.h>           // uploads over Wi-Fi (comes with the ESP32 boards)', '#include <PubSubClient.h>         // Library Manager: "PubSubClient" by Nick O\'Leary');
+  if (wifi && eth) inc.push('#include <ETH.h>                  // the board\'s Ethernet (comes with the ESP32 boards)', '#include <ArduinoOTA.h>           // uploads over the network (comes with the ESP32 boards)', '#include <PubSubClient.h>         // Library Manager: "PubSubClient" by Nick O\'Leary');
+  else if (wifi) inc.push('#include <WiFi.h>', '#include <ArduinoOTA.h>           // uploads over Wi-Fi (comes with the ESP32 boards)', '#include <PubSubClient.h>         // Library Manager: "PubSubClient" by Nick O\'Leary');
   if (inc.length) { inc.forEach(s => add(s)); add(); }
 
   add('// ── Serial Monitor log ──────────────────────────');
@@ -678,12 +725,15 @@ function generate(project, show) {
   add();
 
   if (wifi) {
-    add('// ── Wi-Fi and messages (MQTT) ───────────────────');
-    add('const char *WIFI_NAME     = ' + cstr(W.ssid) + ';');
-    add('const char *WIFI_PASSWORD = ' + cstr(W.pass) + ';');
+    if (eth) add('// ── Network (Ethernet) and messages (MQTT) ──────');
+    else {
+      add('// ── Wi-Fi and messages (MQTT) ───────────────────');
+      add('const char *WIFI_NAME     = ' + cstr(W.ssid) + ';');
+      add('const char *WIFI_PASSWORD = ' + cstr(W.pass) + ';');
+    }
     add('const char *MQTT_SERVER   = ' + cstr(W.server) + ';   // the message server\'s address (Escape Runner, or Mosquitto on any computer)');
     add('const int   MQTT_PORT     = ' + Math.max(1, int(W.port, 1883)) + ';');
-    add('const char *UPLOAD_PASSWORD = ' + cstr(W.otaPass || '') + ';   // asked for when you upload over Wi-Fi (empty: no password)');
+    add('const char *UPLOAD_PASSWORD = ' + cstr(W.otaPass || '') + ';   // asked for when you upload over ' + (eth ? 'the network' : 'Wi-Fi') + ' (empty: no password)');
     if (SH) {
       add('const char *MQTT_ID       = ' + cstr('eb-' + SH.slug) + ';   // this board\'s name on the network');
       add('const char *STATUS_TOPIC  = ' + cstr('eb/' + SH.slug + '/status') + ';');
@@ -703,7 +753,7 @@ function generate(project, show) {
       add('void runCommand(const String &c);   // scene steps from Escape Runner, defined below');
     } else add('const char *MQTT_ID       = ' + cstr(slug(W.id)) + ';   // this prop\'s name on the network');
     add();
-    add('WiFiClient wifiClient;');
+    add(eth ? 'NetworkClient wifiClient;   // works over the Ethernet cable' : 'WiFiClient wifiClient;');
     add('PubSubClient mqtt(wifiClient);');
     add('String lastTopic = "", lastMessage = "";   // the message that just arrived');
     add('bool gotMessage = false;                   // true for one loop when a message arrives');
@@ -728,33 +778,47 @@ function generate(project, show) {
     add();
     add('// Keeps the message connection up without ever pausing the puzzle');
     add('void keepConnected() {');
-    add('  static bool onWifi = false;');
-    add('  if (WiFi.status() != WL_CONNECTED) {');
-    add('    // Not on Wi-Fi: start a fresh attempt every 15 s. The ESP32 only reconnects by itself after a');
-    add('    // connection it already had, so a failed first try at power-on would otherwise never be retried.');
-    add('    static unsigned long wifiRetryAt = 15000;');
-    add('    if ((long)(millis() - wifiRetryAt) >= 0) {');
-    add('      wifiRetryAt = millis() + 15000;');
-    add('      Serial.println("Wi-Fi not connected yet, trying again");');
-    add('      WiFi.disconnect();');
-    add('      WiFi.begin(WIFI_NAME, WIFI_PASSWORD);');
-    add('    }');
-    add('    onWifi = false;');
-    add('    return;');
-    add('  }');
-    add('  if (!onWifi) {   // just joined (or rejoined) the Wi-Fi');
-    add('    onWifi = true;');
-    add('    Serial.print("On Wi-Fi as ");');
-    add('    Serial.print(WiFi.localIP());');
-    add('    Serial.print(", signal ");');
-    add('    Serial.print(WiFi.RSSI());');
-    add('    Serial.println(" dBm (above -70 is good)");');
-    add('  }');
+    if (eth) {
+      add('  static bool onNet = false;');
+      add('  if (!ETH.hasIP()) {   // cable unplugged, or the router hasn\'t given it an address yet');
+      add('    if (onNet) Serial.println("Network lost: check the Ethernet cable");');
+      add('    onNet = false;');
+      add('    return;');
+      add('  }');
+      add('  if (!onNet) {   // just got (or got back) its network address');
+      add('    onNet = true;');
+      add('    Serial.print("On the network as ");');
+      add('    Serial.println(ETH.localIP());');
+      add('  }');
+    } else {
+      add('  static bool onWifi = false;');
+      add('  if (WiFi.status() != WL_CONNECTED) {');
+      add('    // Not on Wi-Fi: start a fresh attempt every 15 s. The ESP32 only reconnects by itself after a');
+      add('    // connection it already had, so a failed first try at power-on would otherwise never be retried.');
+      add('    static unsigned long wifiRetryAt = 15000;');
+      add('    if ((long)(millis() - wifiRetryAt) >= 0) {');
+      add('      wifiRetryAt = millis() + 15000;');
+      add('      Serial.println("Wi-Fi not connected yet, trying again");');
+      add('      WiFi.disconnect();');
+      add('      WiFi.begin(WIFI_NAME, WIFI_PASSWORD);');
+      add('    }');
+      add('    onWifi = false;');
+      add('    return;');
+      add('  }');
+      add('  if (!onWifi) {   // just joined (or rejoined) the Wi-Fi');
+      add('    onWifi = true;');
+      add('    Serial.print("On Wi-Fi as ");');
+      add('    Serial.print(WiFi.localIP());');
+      add('    Serial.print(", signal ");');
+      add('    Serial.print(WiFi.RSSI());');
+      add('    Serial.println(" dBm (above -70 is good)");');
+      add('  }');
+    }
     add('  static bool uploadsReady = false;');
-    add('  if (!uploadsReady) {   // once on Wi-Fi, the Arduino IDE can upload new code to this board over the network');
+    add('  if (!uploadsReady) {   // once on ' + (eth ? 'the network' : 'Wi-Fi') + ', the Arduino IDE can upload new code to this board over the network');
     add('    ArduinoOTA.begin();');
     add('    uploadsReady = true;');
-    add('    Serial.print("Ready for uploads over Wi-Fi: in the Arduino IDE pick the network port ");');
+    add('    Serial.print("Ready for uploads over ' + (eth ? 'the network' : 'Wi-Fi') + ': in the Arduino IDE pick the network port ");');
     add('    Serial.println(MQTT_ID);');
     add('  }');
     add('  if (mqtt.connected()) {');
@@ -838,6 +902,75 @@ function generate(project, show) {
     add();
   }
 
+  if (b24) {
+    add('// ── B24M inputs and outputs ─────────────────────');
+    add('// The board\'s 24 inputs and 24 outputs are on three I/O expander chips (PCF8575) on its I2C bus.');
+    add('// In this code inputs are numbered 1001-1024 and outputs 2001-2024. ioRead, ioWrite and ioMode handle');
+    add('// those, and pass any other number straight to the ESP32 pin (the free GPIOs).');
+    add('const uint8_t CHIP_IN    = 0x22;   // inputs 1-16');
+    add('const uint8_t CHIP_INOUT = 0x25;   // inputs 17-24 (P0-P7) and outputs 1-8 (P8-P15)');
+    add('const uint8_t CHIP_OUT   = 0x24;   // outputs 9-24');
+    add('uint16_t inLow = 0xFFFF, inHigh = 0xFFFF;        // last reading of the input chips (bit HIGH = contact open)');
+    add('uint16_t outInout = 0xFFFF, outOnly = 0xFFFF;    // what the output chips are set to (bit HIGH = output off)');
+    add('unsigned long ioReadAt = 0;');
+    add('bool ioReadOnce = false;');
+    add();
+    add('bool chipWrite(uint8_t addr, uint16_t bits) {');
+    add('  Wire.beginTransmission(addr);');
+    add('  Wire.write((uint8_t)(bits & 0xFF));');
+    add('  Wire.write((uint8_t)(bits >> 8));');
+    add('  return Wire.endTransmission() == 0;');
+    add('}');
+    add('bool chipRead(uint8_t addr, uint16_t &bits) {');
+    add('  if (Wire.requestFrom(addr, (uint8_t)2) != 2) return false;   // no answer: keep the last reading, so nothing triggers by mistake');
+    add('  uint16_t lo = Wire.read();');
+    add('  bits = lo | ((uint16_t)Wire.read() << 8);');
+    add('  return true;');
+    add('}');
+    add('void ioBegin() {');
+    add('  Wire.begin(' + B24M.sda + ', ' + B24M.scl + ');   // the board\'s I2C bus: SDA GPIO ' + B24M.sda + ', SCL GPIO ' + B24M.scl);
+    add('  Wire.setClock(400000);');
+    add('  bool ok = chipWrite(CHIP_INOUT, outInout);   // every output off; input pins stay HIGH so they can be read');
+    add('  ok = chipWrite(CHIP_OUT, outOnly) && ok;');
+    add('  ok = chipWrite(CHIP_IN, 0xFFFF) && ok;');
+    add('  if (!ok) Serial.println("The B24M\'s input/output chips didn\'t answer. Is this a KinCony B24M, with 12-24 V on POWER?");');
+    add('}');
+    add('void ioRefresh() {   // read both input chips, at most every 2 ms');
+    add('  if (ioReadOnce && micros() - ioReadAt < 2000) return;');
+    add('  ioReadOnce = true;');
+    add('  ioReadAt = micros();');
+    add('  chipRead(CHIP_IN, inLow);');
+    add('  chipRead(CHIP_INOUT, inHigh);');
+    add('}');
+    add('int ioRead(int pin) {');
+    add('  if (pin > 1000 && pin <= 1024) {');
+    add('    ioRefresh();');
+    add('    int n = pin - 1000;   // input 1-24');
+    add('    bool high = n <= 8 ? bitRead(inLow, n + 7) : n <= 16 ? bitRead(inLow, n - 9) : bitRead(inHigh, n - 17);');
+    add('    return high ? HIGH : LOW;   // LOW: the contact is closed to GND');
+    add('  }');
+    add('  return digitalRead(pin);');
+    add('}');
+    add('void ioWrite(int pin, int level) {');
+    add('  if (pin > 2000 && pin <= 2024) {');
+    add('    int n = pin - 2000;   // output 1-24; LOW turns the output on');
+    add('    if (n <= 8) {');
+    add('      bitWrite(outInout, n + 7, level == HIGH);');
+    add('      chipWrite(CHIP_INOUT, outInout | 0x00FF);   // keep inputs 17-24 readable');
+    add('    } else {');
+    add('      bitWrite(outOnly, n - 9, level == HIGH);');
+    add('      chipWrite(CHIP_OUT, outOnly);');
+    add('    }');
+    add('    return;');
+    add('  }');
+    add('  digitalWrite(pin, level);');
+    add('}');
+    add('void ioMode(int pin, int mode) {');
+    add('  if (pin < 1000) pinMode(pin, mode);   // the board\'s own inputs and outputs need no setup');
+    add('}');
+    add();
+  }
+
   if (digIns.length) {
     add('// ── Timing ──────────────────────────────────────');
     if (digIns.length) add('const unsigned long DEBOUNCE_MS = 30;   // ignore contact bounce shorter than this');
@@ -862,13 +995,13 @@ function generate(project, show) {
     add('  void begin(int p, int mode, bool lowMeansActive) {');
     add('    pin = p;');
     add('    activeLow = lowMeansActive;');
-    add('    pinMode(pin, mode);');
+    add('    ' + PM + '(pin, mode);');
     add('    lastRaw = read();');
     add('    active = lastRaw;');
     add('    since = millis();');
     add('  }');
     add('  bool read() {');
-    add('    bool high = digitalRead(pin) == HIGH;');
+    add('    bool high = ' + DR + '(pin) == HIGH;');
     add('    return activeLow ? !high : high;');
     add('  }');
     add('  void update() {');
@@ -991,11 +1124,11 @@ function generate(project, show) {
     add('    pin = p;');
     add('    activeLow = lowMeansOn;');
     add('    write(false);           // set the level before enabling, so relays don\'t click at boot');
-    add('    pinMode(pin, OUTPUT);');
+    add('    ' + PM + '(pin, OUTPUT);');
     add('  }');
     add('  void write(bool v) {');
     add('    on = v;');
-    add('    digitalWrite(pin, (v != activeLow) ? HIGH : LOW);');
+    add('    ' + DW + '(pin, (v != activeLow) ? HIGH : LOW);');
     add('  }');
     add('  // Switch on or off, cancelling any running pulse or blink');
     add('  void set(bool v) {');
@@ -1030,7 +1163,7 @@ function generate(project, show) {
     add('    togglesLeft = times < 1 ? -1 : times * 2 - 1;');
     add('    nextToggle = millis() + onMs;');
     add('  }');
-    if (litOut) flashMembers(add, null, '(void)b; /* on/off only: a Dimmer can vary brightness */ digitalWrite(pin, activeLow ? LOW : HIGH);', 'write(on);', 'The light\'s own on/off (and any blink)');
+    if (litOut) flashMembers(add, null, '(void)b; /* on/off only: a Dimmer can vary brightness */ ' + DW + '(pin, activeLow ? LOW : HIGH);', 'write(on);', 'The light\'s own on/off (and any blink)');
     add('  void update() {');
     if (litOut) add('    if (fN && flashUpdate() && fOn) return;   // lightning is showing');
     add('    unsigned long now = millis();');
@@ -1662,16 +1795,23 @@ function generate(project, show) {
 
   add('void setup() {');
   add('  Serial.begin(115200);');
+  if (b24) add('  ioBegin();                 // the board\'s inputs and outputs: everything off first');
   // Flicker and random waits: an Arduino repeats the same "random" numbers every power-up unless seeded from electrical noise
   // (the ESP32 has a hardware random number generator, so it doesn't need this)
   const usesRandom = flickers || project.rules.some(r => r.then.some(a => a.part === '__sys' && a.action === 'wait' && waitMax(a)));
   if (usesRandom && !esp) add('  randomSeed(analogRead(A0) * 31 + analogRead(A1) + micros());   // different random waits and flickers every game');
   if (wifi) {
-    add('  WiFi.mode(WIFI_STA);');
-    add('  WiFi.persistent(false);   // don\'t wear out flash saving Wi-Fi settings on every start');
-    add('  WiFi.setSleep(false);     // stay fully awake on Wi-Fi: steadier connection, quicker replies');
-    add('  WiFi.setAutoReconnect(true);');
-    add('  WiFi.begin(WIFI_NAME, WIFI_PASSWORD);   // connects in the background');
+    if (eth) {
+      const E = B24M.eth;
+      add('  // The board\'s Ethernet chip (W5500): CS ' + E.cs + ', interrupt ' + E.irq + ', reset ' + E.rst + ', SCK ' + E.sck + ', MISO ' + E.miso + ', MOSI ' + E.mosi);
+      add('  ETH.begin(ETH_PHY_W5500, 1, ' + E.cs + ', ' + E.irq + ', ' + E.rst + ', SPI3_HOST, ' + E.sck + ', ' + E.miso + ', ' + E.mosi + ');   // gets an address from the router in the background');
+    } else {
+      add('  WiFi.mode(WIFI_STA);');
+      add('  WiFi.persistent(false);   // don\'t wear out flash saving Wi-Fi settings on every start');
+      add('  WiFi.setSleep(false);     // stay fully awake on Wi-Fi: steadier connection, quicker replies');
+      add('  WiFi.setAutoReconnect(true);');
+      add('  WiFi.begin(WIFI_NAME, WIFI_PASSWORD);   // connects in the background');
+    }
     add('  ArduinoOTA.setHostname(MQTT_ID);         // its name under Tools > Port > Network ports');
     add('  if (UPLOAD_PASSWORD[0]) ArduinoOTA.setPassword(UPLOAD_PASSWORD);');
     add('  ArduinoOTA.onStart([]() { Serial.println("Receiving new code over Wi-Fi..."); });');
@@ -1684,19 +1824,25 @@ function generate(project, show) {
     const v = N[p.id].v, C = PC(p);
     // "Reversed" in Parts: for hardware that reads the opposite way (a sensor that's on when it should be off)
     const flip = !!optsOf(p).flip, lowOn = low => String(flip ? !low : low), note = flip ? '   // reversed: reads the other way round' : '';
-    if (p.type === 'motion') add('  ' + v + '.begin(' + C + ', INPUT, ' + lowOn(false) + ');' + note);
+    if (pin.ext) add('  ' + v + '.begin(' + C + ', INPUT, ' + lowOn(true) + ');' + (note || '         // board input: on when its contact closes to GND'));
+    else if (p.type === 'motion') add('  ' + v + '.begin(' + C + ', INPUT, ' + lowOn(false) + ');' + note);
     else if (p.type === 'linkin') add('  ' + v + '.begin(' + C + ', INPUT, ' + lowOn(false) + ');' + (note || '        // the other board drives this pin HIGH for "on"'));
     else if (pin.inputOnly) add('  ' + v + '.begin(' + C + ', INPUT, ' + lowOn(true) + ');' + (note || '         // needs a 10k pull-up resistor to 3.3V'));
     else add('  ' + v + '.begin(' + C + ', INPUT_PULLUP, ' + lowOn(true) + ');' + note);
   }
   for (const p of dials) add('  ' + N[p.id].v + '.begin(' + PC(p, 'pin') + ', ' + PC(p, 'pin2') + ', ' + Math.max(2, int(optsOf(p).steps, 20)) + ');   // ' + Math.max(2, int(optsOf(p).steps, 20)) + ' positions');
-  if (readers.length) add('  SPI.begin();');
+  if (readers.length) add(b24 ? '  SPI.begin(13, 14, 21);   // RFID on the free pins: SCK 13, MISO 14, MOSI 21' : '  SPI.begin();');
   for (const p of readers) add('  ' + N[p.id].v + '.begin();');
   for (const p of digOuts) {
     const o = optsOf(p);
     const relayLow = (p.type === 'relay' || p.type === 'maglock') && o.activeLow, flipped = (p.type === 'light' || p.type === 'buzzer') && o.flip;
+    if (findPin(project.board, p.pin).ext) {
+      // A board output is on when its expander pin is LOW (it then gives out +12/24 V). "Reversed" swaps that.
+      add('  ' + N[p.id].v + '.begin(' + PC(p) + ', ' + (flipped ? 'false' : 'true') + ');' + (flipped ? '   // reversed: on when the board output is off' : '   // board output'));
+    } else {
     const low = relayLow || flipped;
     add('  ' + N[p.id].v + '.begin(' + PC(p) + ', ' + (low ? 'true' : 'false') + ');' + (relayLow ? '   // relay module switches on when its pin is LOW' : flipped ? '   // reversed: on when its pin is LOW' : ''));
+    }
     const w = OUTPUT_WORDS[p.type] || ['on', 'off'];
     add('  ' + N[p.id].v + '.name = F(' + cstr(oneLine(p.name)) + '); ' + N[p.id].v + '.onWord = F(' + cstr(w[0]) + '); ' + N[p.id].v + '.offWord = F(' + cstr(w[1]) + ');');
   }
@@ -2114,7 +2260,7 @@ function checks(project) {
   if (wifiParts.length && B.family !== 'esp32') out.push('Wi-Fi messages need an ESP32. Switch the board to ESP32 to include ' + wifiParts.map(p => p.name).join(', ') + '.');
   else if (wifiParts.length) {
     const W = wifiOf(project);
-    if (!W.ssid) out.push('Type your Wi-Fi name and password in the Wi-Fi card.');
+    if (!W.ssid && !B.ethernet) out.push('Type your Wi-Fi name and password in the Wi-Fi card.');
     if (!W.server) out.push('Type the message server\u2019s address in the Wi-Fi card.');
     for (const p of wifiParts) if (!optsOf(p).topic) out.push(p.name + ' needs a topic, like room1/seance.');
   }
@@ -2147,7 +2293,7 @@ function checks(project) {
     }
   });
   if (B.family === 'esp32') {
-    if (project.parts.some(p => p.type === 'relay' || p.type === 'maglock')) out.push('ESP32 pins are 3.3 V. Use a relay module rated for 3.3 V input, or one with an optocoupler.');
+    if (project.parts.some(p => (p.type === 'relay' || p.type === 'maglock') && !(findPin(project.board, p.pin) || {}).ext)) out.push('ESP32 pins are 3.3 V. Use a relay module rated for 3.3 V input, or one with an optocoupler.');
   }
   return out;
 }
@@ -2160,6 +2306,26 @@ function wiringFor(project, p) {
   const o = optsOf(p);
   const busList = b => BUSES[b][project.board].map(([id, r]) => r + ' to ' + findPin(project.board, id).label).join(', ');
   const steps = [], tips = [];
+  // KinCony B24M: parts on the board's own inputs and outputs (screw terminals, not ESP32 pins)
+  const bp = findPin(project.board, p.pin);
+  if (bp && bp.ext === 'in') {
+    if (p.type === 'motion') steps.push('Use a sensor whose output closes to GND (a relay or "NPN" output): output to ' + pl + ', its GND to the board\u2019s GND.', 'Power the sensor from the 12 V supply if it takes 12 V.');
+    else if (p.type === 'linkin') steps.push('This input needs a contact to GND, not a voltage: let the other device close a relay contact between ' + pl + ' and GND.');
+    else steps.push('One wire to ' + pl + '.', 'The other wire to GND (the GND terminal next to the inputs, or your GND bus).', 'No resistor or power needed: the board feeds the contact itself.');
+    tips.push('Never feed a voltage into an input. It reads a contact to GND. To sense a 12 V circuit, have it switch a 12 V relay whose contact goes between the input and GND.');
+    if (p.type === 'magnet') tips.push('Use a normally-open reed switch. Hide the magnet in the prop that players place.');
+    return { steps, tips };
+  }
+  if (bp && bp.ext === 'out') {
+    const bank = Math.ceil(int(p.pin.slice(1), 1) / 8);
+    steps.push(pl + ' to a fuse terminal, then to the device\u2019s +.', 'The device\u2019s \u2212 to the \u2212 bus (the 12 V supply\u2019s \u2212).',
+      'This output bank\u2019s DC+ terminal (outputs ' + ((bank - 1) * 8 + 1) + '\u2013' + bank * 8 + ') to the fused +12 V (or +24 V) supply. Without it, none of those 8 outputs work.');
+    tips.push('When on, the output gives out the DC+ voltage. Keep each output to about 3\u20135 A; for bigger loads or mains devices, have it switch a DIN relay.');
+    if (p.type === 'maglock') tips.push('The output is on while locked, so the lock releases if the board or its supply loses power.');
+    if (p.type === 'relay') tips.push('The board has flyback diodes built in, so motors, solenoids and relay coils need no extra diode.');
+    if (p.type === 'linkout') tips.push('This gives out 12/24 V, not a 3.3 V signal. To signal another board, switch a relay and use its contact.');
+    return { steps, tips };
+  }
   switch (p.type) {
     case 'button': case 'switch': case 'magnet': {
       const pin = findPin(project.board, p.pin);
@@ -2419,7 +2585,7 @@ function compileShow(P) {
 function showChecks(P) {
   const out = [];
   const W = wifiOf(P);
-  if (!W.ssid) out.push('Show: type the Wi-Fi name and password in the Show Wi-Fi card.');
+  if (!W.ssid && P.boards.some(b => !BOARDS[b.board].ethernet)) out.push('Show: type the Wi-Fi name and password in the Show Wi-Fi card.');
   if (!W.server) out.push('Show: type Escape Runner’s address in the Show Wi-Fi card.');
   const names = (P.homekit || []).map(x => (x.name || '').trim().toLowerCase());
   if (names.some(n => !n)) out.push('Show: give every HomeKit switch a name.');

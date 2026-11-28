@@ -409,8 +409,9 @@ function partOpts(project, p) {
   switch (p.type) {
     case 'light': case 'buzzer': return cb('startOn', 'On at start') + reversed(false);
     case 'button': case 'switch': case 'magnet': case 'motion': case 'linkin': return reversed(true);
-    case 'relay': return cb('startOn', 'On at start') + cb('activeLow', 'Relay switches on LOW');
-    case 'maglock': return cb('startLocked', 'Locked at start') + cb('activeLow', 'Relay switches on LOW');
+    // On a B24M output the board switches the load itself, so there's no relay module to set
+    case 'relay': return cb('startOn', 'On at start') + ((findPin(project.board, p.pin) || {}).ext ? '' : cb('activeLow', 'Relay switches on LOW'));
+    case 'maglock': return cb('startLocked', 'Locked at start') + ((findPin(project.board, p.pin) || {}).ext ? '' : cb('activeLow', 'Relay switches on LOW'));
     case 'dfplayer': return multi + optNum(p, 'volume', 'Volume', 'of 30', 0, 30) +
       optNum(p, 'gap', 'Wait after a track starts', 'ms', 100, 3000, 50) +
       '<label title="Every 5 seconds the board checks the player still answers, and restarts it if not. Needs the player\u2019s TX wire."><input type="checkbox" id="o-' + p.id + '-restart" data-k="opt" data-id="' + p.id + '" data-opt="restart"' + (o.restart !== false ? ' checked' : '') + '>Restart it if it stops answering</label>';
@@ -669,8 +670,10 @@ function renderPart(project, p) {
   else if (!fs.length) main = '<span class="pin-chip">' + (t.esp32Only ? 'Wi-Fi' : t.bus ? BUSES[t.bus].label + ' · ' + BUSES[t.bus][project.board].map(([id]) => findPin(project.board, id).label.replace('GPIO ', '')).join(' / ') : 'No wiring') + '</span>';
   let warn = '';
   const pin = fs.length === 1 ? findPin(project.board, p.pin) : null;
-  if (pin && pin.note && !(pin.inputOnly && p.type === 'motion')) warn = pin.note;
-  if (pin && pin.inputOnly && HOLDABLE.includes(p.type) && p.type !== 'motion') warn = 'Input only, no internal pull-up: add a 10 kΩ resistor to 3.3V';
+  if (pin && pin.note && !(pin.inputOnly && p.type === 'motion') && !pin.ext && !/^Free pin/.test(pin.note)) warn = pin.note;
+  if (pin && pin.inputOnly && !pin.ext && HOLDABLE.includes(p.type) && p.type !== 'motion') warn = 'Input only, no internal pull-up: add a 10 kΩ resistor to 3.3V';
+  if (pin && pin.ext === 'in' && (p.type === 'motion' || p.type === 'linkin')) warn = 'Board inputs read a contact to GND: use a sensor with a relay or NPN output';
+  if (pin && pin.ext === 'out' && p.type === 'linkout') warn = 'Board outputs give out 12/24 V, not a signal: switch a relay to tell another board';
   if (fs.length > 1) warn = fs.map(([f, role]) => { const x = findPin(project.board, p[f]); return x && /Boot|LED/.test(x.note) ? role + ' is on ' + x.label + ' (' + x.note.split(':')[0].toLowerCase() + ')' : ''; }).filter(Boolean).join('; ');
   if (!isWired(project, p)) warn = fs.length > 1 ? 'Pick every pin to include this part in the code' : 'Pick a pin to include this part in the code';
   if (t.bus && isWired(project, p)) warn = '';
@@ -962,15 +965,15 @@ function showWifiCard(P) {
   return '<section class="card"><div class="card-head"><h2>Show Wi-Fi</h2><span class="sub">Every board joins this network and connects to Escape Runner.</span></div>' +
     '<div class="wifi-grid">' + f('ssid', 'Wi-Fi name', 'text', 'RoomWiFi') + f('pass', 'Wi-Fi password', 'password', '') +
     f('server', 'Escape Runner address', 'text', 'e.g. 192.168.0.242') + f('port', 'Port', 'number', '1883', 'narrow') + f('otaPass', 'Upload password', 'password', 'optional') + '</div>' +
-    '<p class="hint" style="margin:10px 0 0">Escape Runner shows its address on its website, in the Show file section under <b>Escape Runner address</b> (it\u2019s also printed when it starts). ESP32s only join 2.4 GHz Wi-Fi. The password is saved with this show.</p></section>';
+    '<p class="hint" style="margin:10px 0 0">Escape Runner shows its address on its website, in the Show file section under <b>Escape Runner address</b> (it\u2019s also printed when it starts). ESP32s only join 2.4 GHz Wi-Fi. KinCony B24M boards use their Ethernet cable instead, so they ignore the Wi-Fi name. The password is saved with this show.</p></section>';
 }
 function wifiCard(p) {
   if (isShow()) return '';
   if (!p.parts.some(x => TYPES[x.type].esp32Only) || BOARDS[p.board].family !== 'esp32') return '';
-  const W = wifiOf(p);
+  const W = wifiOf(p), eth = !!BOARDS[p.board].ethernet;
   const f = (key, label, type, ph, cls) => '<label class="' + (cls || '') + '"><span class="eyebrow">' + label + '</span><input class="field" type="' + type + '" id="wifi-' + key + '" data-k="wifi" data-f="' + key + '" value="' + esc(W[key]) + '" placeholder="' + esc(ph) + '" spellcheck="false" autocomplete="off"></label>';
-  return '<section class="card"><div class="card-head"><h2>Wi-Fi</h2><span class="sub">How this ESP32 reaches the message server.</span></div>' +
-    '<div class="wifi-grid">' + f('ssid', 'Wi-Fi name', 'text', 'RoomWiFi') + f('pass', 'Wi-Fi password', 'password', '') +
+  return '<section class="card"><div class="card-head"><h2>' + (eth ? 'Network' : 'Wi-Fi') + '</h2><span class="sub">' + (eth ? 'This board uses its Ethernet cable to reach the message server.' : 'How this ESP32 reaches the message server.') + '</span></div>' +
+    '<div class="wifi-grid">' + (eth ? '' : f('ssid', 'Wi-Fi name', 'text', 'RoomWiFi') + f('pass', 'Wi-Fi password', 'password', '')) +
     f('server', 'Message server address', 'text', 'e.g. 192.168.0.242') + f('port', 'Port', 'number', '1883', 'narrow') + f('id', 'This prop\u2019s name', 'text', slug(p.name)) + f('otaPass', 'Upload password', 'password', 'optional') + '</div>' +
     '<p class="hint" style="margin:10px 0 0">The password is saved with this sketch, so it\u2019s also in saved project files. Remove it before sending a project to someone. Setup steps for the message server are in Code → Wiring.</p></section>';
 }
@@ -1205,8 +1208,11 @@ function renderWiring() {
   const esp = BOARDS[p.board].family === 'esp32';
   const hw = p.parts.filter(x => TYPES[x.type].kind !== 'logic');
   $('wiring').innerHTML =
-    '<p class="intro">Power the board over USB while testing. All grounds must connect: board GND, relay modules, and any separate supplies. ' + (esp ? '<b>ESP32 pins are 3.3 V</b>, so never feed 5 V into an input.' : '') + '</p>' +
-    (esp && (isShow() || p.parts.some(x => TYPES[x.type].esp32Only)) ? '<div class="tip ota">' + icon('mqttin', 2) + '<span><b>Upload over Wi-Fi.</b> Upload by USB once. After that, with your computer on the same Wi-Fi, pick <code>' + esc(isShow() ? 'eb-' + slug(p.name) : slug(wifiOf(p).id)) + '</code> under <i>Tools \u2192 Port \u2192 Network ports</i> in the Arduino IDE and press Upload as usual. Set an <b>Upload password</b> in the Wi-Fi card so nobody else on the network can change your props.</span></div>' : '') +
+    (p.board === 'b24m'
+      ? '<p class="intro">Power the board with 12\u201324 V on its <b>POWER</b> terminals (USB-C is for uploading). Feed each output bank\u2019s <b>DC+</b> from your fused supply, and join every supply\u2019s \u2212 to the board\u2019s GND. Inputs read a contact to GND; outputs give out the DC+ voltage when on. The free GPIOs are <b>3.3 V</b> ESP32 pins.</p>'
+      : '<p class="intro">Power the board over USB while testing. All grounds must connect: board GND, relay modules, and any separate supplies. ' + (esp ? '<b>ESP32 pins are 3.3 V</b>, so never feed 5 V into an input.' : '') + '</p>') +
+    (p.board === 'b24m' && (isShow() || p.parts.some(x => TYPES[x.type].esp32Only)) ? '<div class="tip ota">' + icon('mqttin', 2) + '<span><b>Upload over the network.</b> Upload by USB-C once. After that, with your computer on the same network as the board\u2019s Ethernet cable, pick <code>' + esc(isShow() ? 'eb-' + slug(p.name) : slug(wifiOf(p).id)) + '</code> under <i>Tools \u2192 Port \u2192 Network ports</i> in the Arduino IDE and press Upload as usual.</span></div>' :
+    esp && (isShow() || p.parts.some(x => TYPES[x.type].esp32Only)) ? '<div class="tip ota">' + icon('mqttin', 2) + '<span><b>Upload over Wi-Fi.</b> Upload by USB once. After that, with your computer on the same Wi-Fi, pick <code>' + esc(isShow() ? 'eb-' + slug(p.name) : slug(wifiOf(p).id)) + '</code> under <i>Tools \u2192 Port \u2192 Network ports</i> in the Arduino IDE and press Upload as usual. Set an <b>Upload password</b> in the Wi-Fi card so nobody else on the network can change your props.</span></div>' : '') +
     (hw.length ? boardDiagram(p) + hw.map(x => {
       const { steps, tips } = wiringFor(p, x);
       return '<div class="wire-card ' + TYPES[x.type].kind + '"><h3>' + esc(x.name) + ' <code>' + esc(pinLabel(p, x)) + '</code><span>' + (x.type === 'dimmer' && optsOf(x).motor ? 'DC motor' : TYPES[x.type].label) + '</span></h3>' +
